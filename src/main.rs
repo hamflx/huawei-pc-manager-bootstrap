@@ -1,40 +1,17 @@
-#[macro_use]
-extern crate minhook;
-extern crate user32;
-extern crate winapi;
+use std::{env, process::Command};
 
-use std::ptr;
-
-use winapi::{c_int, HWND, LPCSTR, UINT};
-
-static_hooks! {
-    // Create a hook for user32::MessageBoxA.
-    impl MessageBoxA for user32::MessageBoxA: unsafe extern "system" fn(HWND, LPCSTR, LPCSTR, UINT) -> c_int;
-}
+mod common;
 
 fn main() {
-    // Create a detour closure. This closure can capture any Sync variables.
-    let detour =
-        |wnd, text, caption, flags| unsafe { MessageBoxA.call_real(wnd, caption, text, flags) };
+    common::enable_hook(None);
 
-    // Install the hook.
-    unsafe {
-        MessageBoxA.initialize(detour).unwrap();
-    }
+    let self_args: Vec<String> = env::args().skip(1).collect();
+    let command_name = self_args.get(0).unwrap().to_owned();
+    let command_args = self_args.into_iter().skip(1).collect::<Vec<String>>();
+    let mut command = Command::new(command_name)
+        .args(command_args)
+        .spawn()
+        .unwrap();
 
-    let hello = b"Hello\0".as_ptr() as LPCSTR;
-    let world = b"World\0".as_ptr() as LPCSTR;
-
-    // Call the function.
-    unsafe {
-        user32::MessageBoxA(ptr::null_mut(), hello, world, winapi::MB_OK);
-    }
-
-    // Enable the hook.
-    MessageBoxA.enable().unwrap();
-
-    // Call the - now hooked - function.
-    unsafe {
-        user32::MessageBoxA(ptr::null_mut(), hello, world, winapi::MB_OK);
-    }
+    command.wait().unwrap();
 }
