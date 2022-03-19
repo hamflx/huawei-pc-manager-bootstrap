@@ -1,0 +1,11 @@
+[package]
+name = "program-bootstrap"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+minhook = { git = "https://github.com/DottieDot/minhook-rs" }
+winapi = "0.2"
+user32-sys = "0.1"
