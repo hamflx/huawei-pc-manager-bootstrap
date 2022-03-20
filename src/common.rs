@@ -1,4 +1,6 @@
 use detour::static_detour;
+use log::info;
+use serde::{Deserialize, Serialize};
 use std::{
     ffi::{c_void, CString},
     intrinsics::transmute,
@@ -22,9 +24,16 @@ use windows_sys::{
     },
 };
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct InjectOptions {
+    pub server_address: Option<String>,
+}
+
 #[repr(C)]
-pub struct INJECT_OPTIONS {
-    pub main_process: HANDLE,
+#[derive(Serialize, Deserialize)]
+pub struct INJECT_OPTIONS_WRAPPER {
+    pub len: usize,
+    pub ptr: u64,
 }
 
 type FnCreateProcessW = unsafe extern "system" fn(
@@ -59,6 +68,7 @@ static LIBRARY_NAME: &str = "program_bootstrap_core.dll";
 
 #[allow(clippy::too_many_arguments)]
 fn detour_create_process(
+    opts: &Option<InjectOptions>,
     app_name: PCWSTR,
     cmd_line: PWSTR,
     proc_attrs: *const SECURITY_ATTRIBUTES,
@@ -81,10 +91,7 @@ fn detour_create_process(
         } else {
             U16CString::from_ptr_str(cmd_line).to_string().unwrap()
         };
-        println!(
-            "==> CreateProcessW: {} {}",
-            app_name_string, cmd_line_string
-        );
+        info!("CreateProcessW: {} {}", app_name_string, cmd_line_string);
         let flags_with_suspend = CREATE_SUSPENDED | flags;
         let creating_res = HookCreateProcessW.call(
             app_name,
@@ -100,26 +107,53 @@ fn detour_create_process(
         );
 
         if creating_res != 0 {
-            println!("==> New process handle: {:?}", (*proc_info).hProcess);
-            if let Err(err) = inject_to_process((*proc_info).hProcess) {
-                println!("==> inject_to_process error: {}", err);
+            info!("New process handle: {:?}", (*proc_info).hProcess);
+            if let Err(err) = inject_to_process((*proc_info).hProcess, opts) {
+                info!("inject_to_process error: {}", err);
             }
             ResumeThread((*proc_info).hThread);
         } else {
-            println!("==> CreateProcessW failed: {}", GetLastError());
+            info!("CreateProcessW failed: {}", GetLastError());
         }
 
         creating_res
     }
 }
 
-pub fn enable_hook(_opts: Option<INJECT_OPTIONS>) {
+pub fn enable_hook(opts: Option<InjectOptions>) {
     unsafe {
         let fp_create_process: FnCreateProcessW =
             transmute(get_proc_address("CreateProcessW", "kernel32.dll").unwrap());
 
+        let opts = Box::leak(Box::new(opts));
         HookCreateProcessW
-            .initialize(fp_create_process, detour_create_process)
+            .initialize(
+                fp_create_process,
+                |app_name,
+                 cmd_line,
+                 proc_attrs,
+                 th_attrs,
+                 inherit,
+                 flags,
+                 env,
+                 cur_dir,
+                 startup_info,
+                 proc_info| {
+                    detour_create_process(
+                        opts,
+                        app_name,
+                        cmd_line,
+                        proc_attrs,
+                        th_attrs,
+                        inherit,
+                        flags,
+                        env,
+                        cur_dir,
+                        startup_info,
+                        proc_info,
+                    )
+                },
+            )
             .unwrap();
         HookCreateProcessW.enable().unwrap();
     }
@@ -137,7 +171,10 @@ unsafe fn get_proc_address(proc_name: &str, module_name: &str) -> FARPROC {
     GetProcAddress(h_inst, proc_name_cstr.as_ptr() as PCSTR)
 }
 
-unsafe fn inject_to_process(process_handle: HANDLE) -> anyhow::Result<()> {
+unsafe fn inject_to_process(
+    process_handle: HANDLE,
+    opts: &Option<InjectOptions>,
+) -> anyhow::Result<()> {
     let fp_enable_hook = get_proc_address("enable_hook", LIBRARY_NAME)
         .ok_or_else(|| anyhow::anyhow!("No enable_hook function found"))?;
 
@@ -180,12 +217,25 @@ unsafe fn inject_to_process(process_handle: HANDLE) -> anyhow::Result<()> {
         ));
     }
 
+    let enable_hook_params = if let Some(opts) = opts {
+        let opts_bytes = bincode::serialize(opts)?;
+        let opts_ptr = write_process_memory(process_handle, opts_bytes.as_slice())?;
+        let opts_wrapper = INJECT_OPTIONS_WRAPPER {
+            len: opts_bytes.len(),
+            ptr: opts_ptr as u64,
+        };
+        let opts_wrapper_bytes = bincode::serialize(&opts_wrapper)?;
+        let opts_wrapper_ptr = write_process_memory(process_handle, opts_wrapper_bytes.as_slice())?;
+        opts_wrapper_ptr
+    } else {
+        ptr::null()
+    };
     let thread_handle = CreateRemoteThread(
         process_handle,
         ptr::null(),
         0,
         Some(transmute(fp_enable_hook)),
-        ptr::null(),
+        enable_hook_params,
         0,
         ptr::null_mut(),
     );
