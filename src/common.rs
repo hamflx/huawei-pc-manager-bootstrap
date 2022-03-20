@@ -1,9 +1,10 @@
 use detour::static_detour;
-use log::info;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{c_void, CString},
     intrinsics::transmute,
+    mem::MaybeUninit,
     ptr,
 };
 use widestring::U16CString;
@@ -13,11 +14,13 @@ use windows_sys::{
         Foundation::{GetLastError, BOOL, FARPROC, HANDLE},
         Security::SECURITY_ATTRIBUTES,
         System::{
-            Diagnostics::Debug::WriteProcessMemory,
-            LibraryLoader::{GetProcAddress, LoadLibraryA},
+            Diagnostics::Debug::{WriteProcessMemory, PROCESSOR_ARCHITECTURE_INTEL},
+            LibraryLoader::{GetModuleFileNameA, GetProcAddress, LoadLibraryA},
             Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE},
+            SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
             Threading::{
-                CreateRemoteThread, ResumeThread, WaitForSingleObject, CREATE_SUSPENDED,
+                CreateRemoteThread, GetCurrentProcess, GetExitCodeThread, GetThreadId,
+                IsWow64Process, ResumeThread, WaitForSingleObject, CREATE_SUSPENDED,
                 PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOW,
             },
         },
@@ -107,13 +110,17 @@ fn detour_create_process(
         );
 
         if creating_res != 0 {
-            info!("New process handle: {:?}", (*proc_info).hProcess);
+            info!("New process id: {:?}", (*proc_info).dwProcessId);
             if let Err(err) = inject_to_process((*proc_info).hProcess, opts) {
-                info!("inject_to_process error: {}", err);
+                warn!("inject_to_process error: {}", err);
             }
-            ResumeThread((*proc_info).hThread);
+            if flags & CREATE_SUSPENDED == 0 {
+                if ResumeThread((*proc_info).hThread) == u32::MAX {
+                    warn!("ResumeThread error: {}", GetLastError());
+                }
+            }
         } else {
-            info!("CreateProcessW failed: {}", GetLastError());
+            warn!("CreateProcessW failed: {}", GetLastError());
         }
 
         creating_res
@@ -178,20 +185,32 @@ unsafe fn inject_to_process(
     let fp_enable_hook = get_proc_address("enable_hook", LIBRARY_NAME)
         .ok_or_else(|| anyhow::anyhow!("No enable_hook function found"))?;
 
-    let dll_name_addr = VirtualAllocEx(
-        process_handle,
-        ptr::null(),
-        1024,
-        MEM_COMMIT | MEM_RESERVE,
-        PAGE_EXECUTE_READWRITE,
-    );
-    if dll_name_addr.is_null() {
-        return Err(anyhow::anyhow!("VirtualAllocEx failed: {}", GetLastError()));
+    let is_target_x86 = is_process_x86(process_handle)?;
+    let is_self_x86 = is_process_x86(GetCurrentProcess())?;
+    if is_target_x86 != is_self_x86 {
+        return Err(anyhow::anyhow!(
+            "Process architecture mismatch, expect {} got {}",
+            if is_target_x86 { "x86" } else { "x64" },
+            if is_self_x86 { "x86" } else { "x64" }
+        ));
     }
 
     let library_name_with_null = format!("{}\0", LIBRARY_NAME);
-    let library_name_addr =
-        write_process_memory(process_handle, library_name_with_null.as_bytes())?;
+    let core_module_handle = LoadLibraryA(library_name_with_null.as_ptr() as PCSTR);
+    let mut core_full_name_buffer = [0u8; 4096];
+    if core_module_handle == 0
+        || GetModuleFileNameA(
+            core_module_handle,
+            core_full_name_buffer.as_mut_ptr(),
+            core_full_name_buffer.len() as u32,
+        ) == 0
+    {
+        return Err(anyhow::anyhow!(
+            "GetModuleFileNameA failed: {}",
+            GetLastError()
+        ));
+    }
+    let library_name_addr = write_process_memory(process_handle, &core_full_name_buffer)?;
     let fp_load_library = get_proc_address("LoadLibraryA", "kernel32.dll")
         .ok_or_else(|| anyhow::anyhow!("No LoadLibraryA function found"))?;
     let load_library_thread = CreateRemoteThread(
@@ -209,6 +228,10 @@ unsafe fn inject_to_process(
             GetLastError()
         ));
     }
+    info!(
+        "Created LoadLibraryA thread with id: {}",
+        GetThreadId(load_library_thread)
+    );
     let wait_result = WaitForSingleObject(load_library_thread, 0xFFFFFFFF);
     if wait_result != 0 {
         return Err(anyhow::anyhow!(
@@ -216,16 +239,24 @@ unsafe fn inject_to_process(
             wait_result
         ));
     }
+    let mut module_handle: u32 = 0;
+    if GetExitCodeThread(load_library_thread, &mut module_handle as *mut u32) != 0
+        && module_handle == 0
+    {
+        return Err(anyhow::anyhow!("Remote LoadLibraryA failed"));
+    }
 
     let enable_hook_params = if let Some(opts) = opts {
         let opts_bytes = bincode::serialize(opts)?;
         let opts_ptr = write_process_memory(process_handle, opts_bytes.as_slice())?;
+        info!("Write options to address {:?}", opts_ptr);
         let opts_wrapper = INJECT_OPTIONS_WRAPPER {
             len: opts_bytes.len(),
             ptr: opts_ptr as u64,
         };
         let opts_wrapper_bytes = bincode::serialize(&opts_wrapper)?;
         let opts_wrapper_ptr = write_process_memory(process_handle, opts_wrapper_bytes.as_slice())?;
+        info!("Write options wrapper to address {:?}", opts_wrapper_ptr);
         opts_wrapper_ptr
     } else {
         ptr::null()
@@ -245,8 +276,39 @@ unsafe fn inject_to_process(
             GetLastError()
         ));
     }
+    info!(
+        "Created enable_hook thread with id: {}",
+        GetThreadId(thread_handle)
+    );
+    let wait_result = WaitForSingleObject(thread_handle, 0xFFFFFFFF);
+    if wait_result != 0 {
+        return Err(anyhow::anyhow!(
+            "WaitForSingleObject failed: {}",
+            wait_result
+        ));
+    }
 
     Ok(())
+}
+
+fn is_process_x86(process_handle: HANDLE) -> anyhow::Result<bool> {
+    let sys_info = unsafe {
+        let mut sys_info = MaybeUninit::<SYSTEM_INFO>::uninit();
+        GetNativeSystemInfo(sys_info.as_mut_ptr());
+        sys_info.assume_init()
+    };
+    let processor_arch = unsafe { sys_info.Anonymous.Anonymous.wProcessorArchitecture };
+    Ok(processor_arch == PROCESSOR_ARCHITECTURE_INTEL || is_wow64_process(process_handle)?)
+}
+
+fn is_wow64_process(process_handle: HANDLE) -> anyhow::Result<bool> {
+    let mut is_wow64 = 0;
+    unsafe {
+        if IsWow64Process(process_handle, &mut is_wow64) == 0 {
+            return Err(anyhow::anyhow!("IsWow64Process failed: {}", GetLastError()));
+        }
+    }
+    Ok(is_wow64 != 0)
 }
 
 unsafe fn write_process_memory(
@@ -260,6 +322,9 @@ unsafe fn write_process_memory(
         MEM_COMMIT | MEM_RESERVE,
         PAGE_EXECUTE_READWRITE,
     );
+    if target_address.is_null() {
+        return Err(anyhow::anyhow!("VirtualAllocEx failed: {}", GetLastError()));
+    }
     let success = WriteProcessMemory(
         process_handle,
         target_address,

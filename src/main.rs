@@ -25,10 +25,16 @@ fn main() {
     let self_args: Vec<String> = env::args().skip(1).collect();
     let command_name = self_args.get(0).unwrap().to_owned();
     let command_args = self_args.into_iter().skip(1).collect::<Vec<String>>();
+    info!(
+        "Executing {} with args: {}",
+        command_name,
+        command_args.join(" ")
+    );
     let mut command = Command::new(command_name)
         .args(command_args)
         .spawn()
         .unwrap();
 
-    command.wait().unwrap();
+    let exit = command.wait().unwrap();
+    info!("Command exited with {}", exit);
 }

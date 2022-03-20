@@ -11,7 +11,7 @@ mod common;
 mod communication;
 
 #[no_mangle]
-pub unsafe extern "C" fn enable_hook(opts_ptr: *const INJECT_OPTIONS_WRAPPER) {
+pub unsafe extern "system" fn enable_hook(opts_ptr: *const INJECT_OPTIONS_WRAPPER) {
     let opts: Option<InjectOptions> = if opts_ptr.is_null() || (*opts_ptr).len == 0 {
         None
     } else {
