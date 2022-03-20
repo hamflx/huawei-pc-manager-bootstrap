@@ -20,8 +20,8 @@ use windows_sys::{
             SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
             Threading::{
                 CreateRemoteThread, GetCurrentProcess, GetExitCodeThread, GetThreadId,
-                IsWow64Process, ResumeThread, WaitForSingleObject, CREATE_SUSPENDED,
-                PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOW,
+                IsWow64Process, ResumeThread, TerminateProcess, WaitForSingleObject,
+                CREATE_SUSPENDED, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOW,
             },
         },
     },
@@ -111,6 +111,16 @@ fn detour_create_process(
 
         if creating_res != 0 {
             info!("New process id: {:?}", (*proc_info).dwProcessId);
+            if cmd_line_string.contains("isSupportDevice") {
+                info!("Command line contains isSupportDevice, exit with 1");
+                TerminateProcess((*proc_info).hProcess, 1);
+                return creating_res;
+            }
+            if cmd_line_string.contains("IsSupportBaZhang") {
+                info!("Command line contains IsSupportBaZhang, exit with 2");
+                TerminateProcess((*proc_info).hProcess, 2);
+                return creating_res;
+            }
             if let Err(err) = inject_to_process((*proc_info).hProcess, opts) {
                 warn!("inject_to_process error: {}", err);
             }
