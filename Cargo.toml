@@ -25,3 +25,4 @@ windows-sys = { version = "0.34.0", features = [
 ] }
 serde = { version = "1.0", features = ["derive"] }
 simple_logger = "2.1.0"
+ctrlc = "3.2.1"

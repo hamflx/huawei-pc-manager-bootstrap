@@ -1,4 +1,10 @@
-use std::{env, process::Command};
+use std::{
+    env,
+    process::Command,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 use communication::InterProcessComServer;
 use log::info;
@@ -30,11 +36,25 @@ fn main() {
         command_name,
         command_args.join(" ")
     );
-    let mut command = Command::new(command_name)
+    let command = Command::new(command_name)
         .args(command_args)
         .spawn()
         .unwrap();
 
-    let exit = command.wait().unwrap();
-    info!("Command exited with {}", exit);
+    let command_for_wait = Arc::new(Mutex::new(command));
+    let command_for_exit = command_for_wait.clone();
+    ctrlc::set_handler(move || {
+        info!("Exiting...");
+        command_for_exit.lock().unwrap().kill().unwrap();
+        std::process::exit(0);
+    })
+    .expect("Error setting Ctrl-C handler");
+
+    while let Ok(exit_status) = command_for_wait.lock().unwrap().try_wait() {
+        if let Some(exit_code) = exit_status {
+            info!("Command exited with {}", exit_code);
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }

@@ -2,10 +2,11 @@ use detour::static_detour;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
-    ffi::{c_void, CString},
+    ffi::{c_void, CStr, CString},
     intrinsics::transmute,
     mem::MaybeUninit,
     ptr,
+    slice::from_raw_parts,
 };
 use widestring::U16CString;
 use windows_sys::{
@@ -17,7 +18,9 @@ use windows_sys::{
             Diagnostics::Debug::{WriteProcessMemory, PROCESSOR_ARCHITECTURE_INTEL},
             LibraryLoader::{GetModuleFileNameA, GetProcAddress, LoadLibraryA},
             Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE},
-            SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
+            SystemInformation::{
+                GetNativeSystemInfo, FIRMWARE_TABLE_ID, FIRMWARE_TABLE_PROVIDER, SYSTEM_INFO,
+            },
             Threading::{
                 CreateRemoteThread, GetCurrentProcess, GetExitCodeThread, GetThreadId,
                 IsWow64Process, ResumeThread, TerminateProcess, WaitForSingleObject,
@@ -39,6 +42,42 @@ pub struct INJECT_OPTIONS_WRAPPER {
     pub ptr: u64,
 }
 
+#[repr(C)]
+#[derive(Clone)]
+#[allow(non_snake_case)]
+pub struct RawSMBIOSData {
+    pub Used20CallingMethod: u8,
+    pub SMBIOSMajorVersion: u8,
+    pub SMBIOSMinorVersion: u8,
+    pub DmiRevision: u8,
+    pub Length: u32,
+    pub SMBIOSTableData: [u8; 0],
+}
+
+#[repr(C)]
+#[derive(Clone)]
+#[allow(non_snake_case)]
+pub struct SMBIOSHEADER {
+    pub Type: u8,
+    pub Length: u8,
+    pub Handle: u16,
+}
+
+#[repr(C)]
+#[derive(Clone)]
+#[allow(non_snake_case)]
+pub struct SystemInfo {
+    pub Header: SMBIOSHEADER,
+    pub Manufacturer: u8,
+    pub ProductName: u8,
+    pub Version: u8,
+    pub SN: u8,
+    pub UUID: [u8; 16],
+    pub WakeUpType: u8,
+    pub SKUNumber: u8,
+    pub Family: u8,
+}
+
 type FnCreateProcessW = unsafe extern "system" fn(
     PCWSTR,
     PWSTR,
@@ -51,23 +90,220 @@ type FnCreateProcessW = unsafe extern "system" fn(
     *const STARTUPINFOW,
     *mut PROCESS_INFORMATION,
 ) -> BOOL;
+type FnGetSystemFirmwareTable = unsafe extern "system" fn(
+    FIRMWARE_TABLE_PROVIDER,
+    FIRMWARE_TABLE_ID,
+    *mut ::core::ffi::c_void,
+    u32,
+) -> u32;
+type FnEnumSystemFirmwareTables = unsafe extern "system" fn(
+    firmwaretableprovidersignature: FIRMWARE_TABLE_PROVIDER,
+    pfirmwaretableenumbuffer: *mut FIRMWARE_TABLE_ID,
+    buffersize: u32,
+) -> u32;
 
 static_detour! {
-  static HookCreateProcessW: unsafe extern "system" fn(
-      PCWSTR,
-      PWSTR,
-      *const SECURITY_ATTRIBUTES,
-      *const SECURITY_ATTRIBUTES,
-      BOOL,
-      PROCESS_CREATION_FLAGS,
-      *const c_void,
-      PCWSTR,
-      *const STARTUPINFOW,
-      *mut PROCESS_INFORMATION
-  ) -> BOOL;
+    static HookCreateProcessW: unsafe extern "system" fn(
+        PCWSTR,
+        PWSTR,
+        *const SECURITY_ATTRIBUTES,
+        *const SECURITY_ATTRIBUTES,
+        BOOL,
+        PROCESS_CREATION_FLAGS,
+        *const c_void,
+        PCWSTR,
+        *const STARTUPINFOW,
+        *mut PROCESS_INFORMATION
+    ) -> BOOL;
+  static HookGetSystemFirmwareTable: unsafe extern "system" fn(
+        u32,
+        u32,
+        *mut c_void,
+        u32
+    ) -> u32;
+  static HookEnumSystemFirmwareTables: unsafe extern "system" fn(
+        u32,
+        *mut u32,
+        u32
+    ) -> u32;
 }
 
 static LIBRARY_NAME: &str = "program_bootstrap_core.dll";
+
+fn detour_get_system_firmware_table(
+    firmwaretableprovidersignature: FIRMWARE_TABLE_PROVIDER,
+    firmwaretableid: FIRMWARE_TABLE_ID,
+    pfirmwaretablebuffer: *mut ::core::ffi::c_void,
+    buffersize: u32,
+) -> u32 {
+    let sig_name = get_firmware_table_provider_signature(firmwaretableprovidersignature);
+    let id_name = get_firmware_table_provider_signature(firmwaretableid);
+    info!(
+        "Calling GetSystemFirmwareTable: {}({}), {}({}), 0x{:x}, {}",
+        firmwaretableprovidersignature,
+        sig_name,
+        firmwaretableid,
+        id_name,
+        pfirmwaretablebuffer as usize,
+        buffersize
+    );
+
+    let result = unsafe {
+        HookGetSystemFirmwareTable.call(
+            firmwaretableprovidersignature,
+            firmwaretableid,
+            pfirmwaretablebuffer,
+            buffersize,
+        )
+    };
+    if result != 0 && !pfirmwaretablebuffer.is_null() {
+        unsafe {
+            let raw_bios_ptr = pfirmwaretablebuffer as *mut RawSMBIOSData;
+            let start_ptr: *mut u8 = transmute(&(*raw_bios_ptr).SMBIOSTableData);
+            let end_ptr = start_ptr.add((*raw_bios_ptr).Length as usize);
+            let mut header_ptr: *mut SMBIOSHEADER = transmute(start_ptr as *mut u8);
+
+            loop {
+                if (*header_ptr).Type == 1 {
+                    // http://huaweisn.com/
+                    let new_sys_info = construct_own_sys_info(
+                        header_ptr as *mut SystemInfo,
+                        "HUAWEI",
+                        "MRC-W50",
+                        "1.0",
+                        "5EKPM18320000397",
+                    );
+                    let first_str_ptr = (header_ptr as *mut u8).add((*header_ptr).Length as usize);
+                    new_sys_info
+                        .iter()
+                        .enumerate()
+                        .for_each(|(i, ch)| *(first_str_ptr.add(i)) = *ch);
+
+                    dump_sys_info(header_ptr);
+                }
+
+                if (*header_ptr).Type == 127 && (*header_ptr).Length == 4 {
+                    break;
+                }
+
+                let mut next_header = (header_ptr as *const u8).offset((*header_ptr).Length.into());
+                while 0 != (*next_header | *(next_header.offset(1))) {
+                    next_header = next_header.offset(1);
+                }
+                next_header = next_header.offset(2);
+                if next_header >= end_ptr {
+                    break;
+                }
+                header_ptr = next_header as *mut SMBIOSHEADER;
+            }
+        }
+    }
+    result
+}
+
+fn dump_sys_info(header_ptr: *const SMBIOSHEADER) {
+    let system_info_ptr = header_ptr as *const SystemInfo;
+    let first_str_ptr = unsafe { (header_ptr as *const u8).add((*header_ptr).Length as usize) };
+    info!(
+        "Manufacturer: {}",
+        locate_string(first_str_ptr, unsafe { (*system_info_ptr).Manufacturer })
+            .unwrap_or_else(|| String::from("No Manufacturer"))
+    );
+    info!(
+        "ProductName: {}",
+        locate_string(first_str_ptr, unsafe { (*system_info_ptr).ProductName })
+            .unwrap_or_else(|| String::from("No ProductName"))
+    );
+    info!(
+        "Version: {}",
+        locate_string(first_str_ptr, unsafe { (*system_info_ptr).Version })
+            .unwrap_or_else(|| String::from("No Version"))
+    );
+    info!(
+        "SN: {}",
+        locate_string(first_str_ptr, unsafe { (*system_info_ptr).SN })
+            .unwrap_or_else(|| String::from("No SN"))
+    );
+    info!(
+        "SysInfoData: {:?}",
+        String::from_utf8_lossy(unsafe { from_raw_parts(first_str_ptr, 100) })
+    );
+}
+
+fn construct_own_sys_info(
+    sys_info_header: *mut SystemInfo,
+    manufacture: &str,
+    product_name: &str,
+    version: &str,
+    sn: &str,
+) -> Vec<u8> {
+    let sys_info_data = format!("{}\0{}\0{}\0{}\0", manufacture, product_name, version, sn);
+
+    unsafe {
+        (*sys_info_header).Manufacturer = 1;
+        (*sys_info_header).ProductName = 2;
+        (*sys_info_header).Version = 3;
+        (*sys_info_header).SN = 4;
+
+        (*sys_info_header).WakeUpType = 0;
+        (*sys_info_header).SKUNumber = 0;
+        (*sys_info_header).Family = 0;
+    }
+
+    sys_info_data.as_bytes().to_vec()
+}
+
+fn locate_string(oem_str: *const u8, index: u8) -> Option<String> {
+    if index == 0 || unsafe { *oem_str } == 0 {
+        return None;
+    }
+    let mut i = index;
+    let mut str_ptr = oem_str;
+    loop {
+        i -= 1;
+        if i == 0 {
+            break;
+        }
+        str_ptr = unsafe { str_ptr.add(str_len(str_ptr) as usize + 1) }
+    }
+    Some(
+        unsafe { CStr::from_ptr(str_ptr as *const i8) }
+            .to_str()
+            .unwrap()
+            .to_string(),
+    )
+}
+
+fn str_len(cstr: *const u8) -> usize {
+    let mut current_ptr = cstr;
+    let mut count = 0;
+    while unsafe { *current_ptr != 0 } {
+        count += 1;
+        current_ptr = unsafe { current_ptr.offset(1) };
+    }
+    return count;
+}
+
+fn detour_enum_system_firmware_tables(
+    firmwaretableprovidersignature: FIRMWARE_TABLE_PROVIDER,
+    pfirmwaretableenumbuffer: *mut FIRMWARE_TABLE_ID,
+    buffersize: u32,
+) -> u32 {
+    let sig_name = get_firmware_table_provider_signature(firmwaretableprovidersignature);
+    info!(
+        "Calling EnumSystemFirmwareTables: {}, 0x{:x}, {}",
+        sig_name, pfirmwaretableenumbuffer as usize, buffersize
+    );
+
+    let result = unsafe {
+        HookEnumSystemFirmwareTables.call(
+            firmwaretableprovidersignature,
+            pfirmwaretableenumbuffer,
+            buffersize,
+        )
+    };
+    result
+}
 
 #[allow(clippy::too_many_arguments)]
 fn detour_create_process(
@@ -141,8 +377,24 @@ pub fn enable_hook(opts: Option<InjectOptions>) {
     unsafe {
         let fp_create_process: FnCreateProcessW =
             transmute(get_proc_address("CreateProcessW", "kernel32.dll").unwrap());
+        let fp_get_system_firmware_table: FnGetSystemFirmwareTable =
+            transmute(get_proc_address("GetSystemFirmwareTable", "kernel32.dll").unwrap());
+        let fp_enum_system_firmware_tables: FnEnumSystemFirmwareTables =
+            transmute(get_proc_address("EnumSystemFirmwareTables", "kernel32.dll").unwrap());
 
         let opts = Box::leak(Box::new(opts));
+        HookGetSystemFirmwareTable
+            .initialize(
+                fp_get_system_firmware_table,
+                detour_get_system_firmware_table,
+            )
+            .unwrap();
+        HookEnumSystemFirmwareTables
+            .initialize(
+                fp_enum_system_firmware_tables,
+                detour_enum_system_firmware_tables,
+            )
+            .unwrap();
         HookCreateProcessW
             .initialize(
                 fp_create_process,
@@ -172,6 +424,8 @@ pub fn enable_hook(opts: Option<InjectOptions>) {
                 },
             )
             .unwrap();
+        HookGetSystemFirmwareTable.enable().unwrap();
+        HookEnumSystemFirmwareTables.enable().unwrap();
         HookCreateProcessW.enable().unwrap();
     }
 }
@@ -349,4 +603,17 @@ unsafe fn write_process_memory(
         ));
     }
     Ok(target_address)
+}
+
+fn get_firmware_table_provider_signature(firmwaretableprovidersignature: u32) -> String {
+    let mut sig_name_bytes = unsafe {
+        from_raw_parts(
+            &firmwaretableprovidersignature as *const u32 as *const u8,
+            4,
+        )
+    }
+    .to_vec();
+    sig_name_bytes.reverse();
+    let sig_name = String::from_utf8(sig_name_bytes).unwrap_or_else(|e| format!("Error({})", e));
+    sig_name
 }
