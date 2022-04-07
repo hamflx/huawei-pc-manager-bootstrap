@@ -169,9 +169,10 @@ fn detour_get_system_firmware_table(
                     let new_sys_info = construct_own_sys_info(
                         header_ptr as *mut SystemInfo,
                         "HUAWEI",
-                        "MRC-W50",
+                        "HKD-WXX",
                         "1.0",
                         "5EKPM18320000397",
+                        "C233",
                     );
                     let first_str_ptr = (header_ptr as *mut u8).add((*header_ptr).Length as usize);
                     new_sys_info
@@ -236,6 +237,7 @@ fn construct_own_sys_info(
     product_name: &str,
     version: &str,
     sn: &str,
+    _sku: &str,
 ) -> Vec<u8> {
     let sys_info_data = format!("{}\0{}\0{}\0{}\0", manufacture, product_name, version, sn);
 
