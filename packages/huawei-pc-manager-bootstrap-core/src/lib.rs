@@ -1,11 +1,12 @@
 #![feature(ptr_const_cast)]
 
+use std::fs::File;
 use std::slice::from_raw_parts;
 
 use common::common::{InjectOptions, INJECT_OPTIONS_WRAPPER};
 use common::communication::InterProcessComClient;
 use log::{info, LevelFilter};
-use simple_logger::SimpleLogger;
+use simplelog::{Config, WriteLogger};
 
 #[no_mangle]
 pub unsafe extern "system" fn enable_hook(opts_ptr: *const INJECT_OPTIONS_WRAPPER) {
@@ -30,8 +31,26 @@ pub unsafe extern "system" fn enable_hook(opts_ptr: *const INJECT_OPTIONS_WRAPPE
     } else {
         None
     }
-    .or_else(|| SimpleLogger::new().init().ok());
+    .or_else(|| initialize_file_logger().ok());
 
     info!("Enabling hook ...");
     common::common::enable_hook(opts);
+}
+
+pub fn initialize_file_logger() -> anyhow::Result<()> {
+    let project_dir = directories::ProjectDirs::from("cn", "hamflx", "huawei_pc_manager_bootstrap")
+        .ok_or_else(|| anyhow::anyhow!("No project dir"))?;
+    let cache_dir = project_dir.cache_dir();
+    std::fs::create_dir_all(cache_dir)?;
+
+    let mut log_file_path = cache_dir.to_path_buf();
+    let now = chrono::Local::now();
+    log_file_path.push(format!("core-{}.log", now.format("%Y%m%d%H%M%S")));
+
+    WriteLogger::init(
+        LevelFilter::Info,
+        Config::default(),
+        File::create(log_file_path)?,
+    )?;
+    Ok(())
 }
