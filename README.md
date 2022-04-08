@@ -22,3 +22,7 @@ cargo +nightly-x86_64-pc-windows-msvc build --target=x86_64-pc-windows-msvc
 ```cmd
 program-bootstrap.exe PCManager_Setup_12.0.1.26(C233D003).exe
 ```
+
+## VERSION.DLL
+
+对每个导出方法生成一个函数，在 `DllMain` 中将这些函数的入口代码改为 `jmp` 指令。
