@@ -5,8 +5,6 @@
 use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteA};
 
 mod app;
-mod common;
-mod communication;
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]

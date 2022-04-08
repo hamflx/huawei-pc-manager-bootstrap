@@ -128,7 +128,7 @@ static_detour! {
     ) -> u32;
 }
 
-static LIBRARY_NAME: &str = "program_bootstrap_core.dll";
+static LIBRARY_NAME: &str = "huawei_pc_manager_bootstrap_core.dll";
 
 fn detour_get_system_firmware_table(
     firmwaretableprovidersignature: FIRMWARE_TABLE_PROVIDER,

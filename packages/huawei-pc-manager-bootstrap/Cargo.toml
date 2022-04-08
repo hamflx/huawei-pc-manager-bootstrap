@@ -1,0 +1,25 @@
+[package]
+name = "huawei-pc-manager-bootstrap"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+
+anyhow = "1.0.56"
+eframe = "0.17.0" # Gives us egui, epi and web+native backends
+rfd = "0.8.1"
+ctrlc = "3.2.1"
+windows-sys = { version = "0.35.0", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Threading",
+  "Win32_System_Memory",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_SystemInformation"
+] }
+log = "0.4.14"
+simple_logger = "2.1.0"

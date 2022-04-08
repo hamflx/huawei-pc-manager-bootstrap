@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::common::{self, InjectOptions};
-use crate::communication::InterProcessComServer;
+use common::common::InjectOptions;
+use common::communication::InterProcessComServer;
 use eframe::{egui, epi};
 use log::info;
 use rfd::FileDialog;
@@ -35,7 +35,7 @@ impl BootstrapApp {
 
         info!("Listening on {}", address.to_string());
 
-        common::enable_hook(Some(InjectOptions {
+        common::common::enable_hook(Some(InjectOptions {
             server_address: Some(address.to_string()),
         }));
 
