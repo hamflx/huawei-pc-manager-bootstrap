@@ -2,7 +2,6 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] //Hide console window in release builds on Windows, this blocks stdout.
 
-// use communication::InterProcessComServer;
 use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteA};
 
 mod app;
