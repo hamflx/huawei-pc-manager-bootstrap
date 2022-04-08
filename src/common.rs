@@ -448,7 +448,16 @@ unsafe fn inject_to_process(
     process_handle: HANDLE,
     opts: &Option<InjectOptions>,
 ) -> anyhow::Result<()> {
-    let fp_enable_hook = get_proc_address("enable_hook", LIBRARY_NAME)
+    let mut lib_full_path = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("No path content"))?
+        .to_path_buf();
+    lib_full_path.push(LIBRARY_NAME);
+    let lib_full_path = lib_full_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("No path content"))?;
+    info!("Get enable_hook address from {}", lib_full_path);
+    let fp_enable_hook = get_proc_address("enable_hook", lib_full_path)
         .ok_or_else(|| anyhow::anyhow!("No enable_hook function found"))?;
 
     let is_target_x86 = is_process_x86(process_handle)?;
