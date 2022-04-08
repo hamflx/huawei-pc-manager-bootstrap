@@ -3,9 +3,9 @@ name = "program-bootstrap"
 version = "0.1.0"
 edition = "2021"
 
-# [lib]
-# name = "program_bootstrap_core"
-# crate-type = ["cdylib"]
+[lib]
+name = "program_bootstrap_core"
+crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1.0.56"
