@@ -3,9 +3,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
 
 use common::common::InjectOptions;
 use common::communication::InterProcessComServer;
@@ -105,42 +103,92 @@ impl BootstrapApp {
             inject_sub_process: true,
         }))?;
 
-        info!("Executing {}", self.executable_file_path);
-        let command = Command::new(&self.executable_file_path).spawn()?;
-
-        let command_for_wait = Arc::new(Mutex::new(command));
-        let command_for_exit = command_for_wait.clone();
-        ctrlc::set_handler(move || {
-            info!("Exiting...");
-            command_for_exit.lock().unwrap().kill().unwrap();
-            std::process::exit(0);
-        })
-        .expect("Error setting Ctrl-C handler");
-
-        while let Ok(exit_status) = command_for_wait.lock().unwrap().try_wait() {
-            if let Some(exit_code) = exit_status {
-                info!("Command exited with {}", exit_code);
-                break;
+        let executable_file_path = self.executable_file_path.clone();
+        let _ = thread::spawn(move || {
+            info!("Executing {}", executable_file_path);
+            match Command::new(&executable_file_path).spawn() {
+                Ok(mut wait_handle) => {
+                    let mut is_patch_installed = false;
+                    info!("Executed {}", executable_file_path);
+                    loop {
+                        match wait_handle.try_wait() {
+                            Ok(Some(exit_status)) => {
+                                info!(
+                                    "{} exited with status {}",
+                                    executable_file_path, exit_status
+                                );
+                                break;
+                            }
+                            Ok(None) => {
+                                if !is_patch_installed {
+                                    match Self::check_pc_manager_installed() {
+                                        Ok(true) => match Self::install_patch() {
+                                            Ok(_) => {
+                                                is_patch_installed = true;
+                                                info!("Installed patch successfully");
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to install patch: {}", e);
+                                            }
+                                        },
+                                        Ok(false) => {
+                                            info!("PCManager is not installed, wating ...");
+                                        }
+                                        Err(err) => {
+                                            warn!("Failed to check PC Manager installed: {}", err);
+                                        }
+                                    }
+                                }
+                                thread::sleep(std::time::Duration::from_millis(100));
+                            }
+                            Err(e) => {
+                                warn!("{} exited with error: {}", executable_file_path, e);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => warn!("Failed to execute {}: {}", executable_file_path, e),
             }
-            thread::sleep(Duration::from_millis(50));
-        }
+        });
 
         Ok(())
     }
 
-    fn install_all(&self) -> anyhow::Result<()> {
-        self.start_install()?;
-        self.install_patch()?;
-        Ok(())
-    }
-
-    fn install_patch(&self) -> anyhow::Result<()> {
+    fn install_patch() -> anyhow::Result<()> {
         #[cfg(debug_assertions)]
         let patch_file_bytes =
             include_bytes!("../../../target/x86_64-pc-windows-msvc/debug/version.dll");
         #[cfg(not(debug_assertions))]
         let patch_file_bytes =
             include_bytes!("../../../target/x86_64-pc-windows-msvc/release/version.dll");
+
+        let pc_manager_dir: PathBuf = Self::get_pc_manager_dir()?;
+        let target_version_dll_path = pc_manager_dir.join("version.dll");
+        std::fs::write(&target_version_dll_path, patch_file_bytes)?;
+
+        Ok(())
+    }
+
+    fn open_log_file(&self) {
+        let _ = Command::new("notepad").arg(&self.log_file_path).spawn();
+    }
+
+    fn open_log_file_dir(&self) -> anyhow::Result<()> {
+        let log_file_path = PathBuf::from_str(self.log_file_path.as_str())?;
+        let log_dir = log_file_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("No parent dir"))?;
+        let _ = Command::new("explorer").arg(log_dir).spawn()?;
+        Ok(())
+    }
+
+    fn check_pc_manager_installed() -> anyhow::Result<bool> {
+        let pc_manager_exe: PathBuf = Self::get_pc_manager_dir()?.join("PCManager.exe");
+        Ok(pc_manager_exe.exists())
+    }
+
+    fn get_pc_manager_dir() -> anyhow::Result<PathBuf> {
         let mut path_buffer = [0; 4096];
         let get_dir_success = unsafe {
             SHGetSpecialFolderPathA(
@@ -166,24 +214,7 @@ impl BootstrapApp {
             program_files_dir
         };
 
-        let pc_manager_dir: PathBuf = [program_files_dir, "Huawei", "PCManager"].iter().collect();
-        let target_version_dll_path = pc_manager_dir.join("version.dll");
-        std::fs::write(&target_version_dll_path, patch_file_bytes)?;
-
-        Ok(())
-    }
-
-    fn open_log_file(&self) {
-        let _ = Command::new("notepad").arg(&self.log_file_path).spawn();
-    }
-
-    fn open_log_file_dir(&self) -> anyhow::Result<()> {
-        let log_file_path = PathBuf::from_str(self.log_file_path.as_str())?;
-        let log_dir = log_file_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("No parent dir"))?;
-        let _ = Command::new("explorer").arg(log_dir).spawn()?;
-        Ok(())
+        Ok([program_files_dir, "Huawei", "PCManager"].iter().collect())
     }
 }
 
@@ -295,14 +326,14 @@ impl epi::App for BootstrapApp {
                     }
 
                     if ui.button("安装").clicked() {
-                        if let Err(err) = self.install_all() {
+                        if let Err(err) = self.start_install() {
                             self.status_text = format!("Installing failed: {}", err);
                             warn!("Installing failed: {}", err);
                         }
                     }
 
                     if ui.button("安装补丁").clicked() {
-                        if let Err(err) = self.install_patch() {
+                        if let Err(err) = Self::install_patch() {
                             self.status_text = format!("Installing failed: {}", err);
                             warn!("Installing failed: {}", err);
                         }
