@@ -1,0 +1,21 @@
+[package]
+name = "version"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0.56"
+chrono = "0.4.19"
+common = { path = "../common" }
+windows-sys = { version = "0.35.0", features = [
+  "Win32_Foundation",
+  "Win32_System_Memory",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_WindowsAndMessaging"
+] }
+simplelog = "0.11.2"
+directories = "4.0.1"
+log = "0.4.14"

@@ -1,27 +1,4 @@
-[package]
-name = "program-bootstrap"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-name = "program_bootstrap_core"
-crate-type = ["cdylib"]
-
-[dependencies]
-anyhow = "1.0.56"
-bincode = "1.3.3"
-detour = "0.8.1"
-log = "0.4.14"
-widestring = "0.5.1"
-windows-sys = { version = "0.34.0", features = [
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_System_LibraryLoader",
-  "Win32_UI_WindowsAndMessaging",
-  "Win32_System_Threading",
-  "Win32_System_Memory",
-  "Win32_System_Diagnostics_Debug",
-  "Win32_System_SystemInformation"
-] }
-serde = { version = "1.0", features = ["derive"] }
-simple_logger = "2.1.0"
+[workspace]
+members = [
+  "packages/*"
+]
