@@ -5,7 +5,7 @@ use std::slice::from_raw_parts;
 
 use common::common::{InjectOptions, INJECT_OPTIONS_WRAPPER};
 use common::communication::InterProcessComClient;
-use log::{info, LevelFilter};
+use log::{error, info, LevelFilter};
 use simplelog::{Config, WriteLogger};
 
 #[no_mangle]
@@ -34,7 +34,9 @@ pub unsafe extern "system" fn enable_hook(opts_ptr: *const INJECT_OPTIONS_WRAPPE
     .or_else(|| initialize_file_logger().ok());
 
     info!("Enabling hook ...");
-    common::common::enable_hook(opts);
+    if let Err(err) = common::common::enable_hook(opts) {
+        error!("{}", err);
+    }
 }
 
 pub fn initialize_file_logger() -> anyhow::Result<()> {

@@ -7,6 +7,7 @@ edition = "2021"
 common = { path = "../common" }
 
 anyhow = "1.0.56"
+chrono = "0.4.19"
 eframe = "0.17.0" # Gives us egui, epi and web+native backends
 rfd = "0.8.1"
 ctrlc = "3.2.1"
@@ -22,4 +23,5 @@ windows-sys = { version = "0.35.0", features = [
   "Win32_System_SystemInformation"
 ] }
 log = "0.4.14"
-simple_logger = "2.1.0"
+simplelog = "0.11.2"
+directories = "4.0.1"

@@ -6,8 +6,6 @@ use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteA};
 
 mod app;
 
-// When compiling natively:
-#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     let is_admin = true || unsafe { IsUserAnAdmin() != 0 };
     let ensure_admin = std::env::args().any(|a| a == "--ensure-admin");

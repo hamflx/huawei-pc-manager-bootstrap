@@ -1139,12 +1139,14 @@ name = "huawei-pc-manager-bootstrap"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "common",
  "ctrlc",
+ "directories",
  "eframe",
  "log",
  "rfd",
- "simple_logger",
+ "simplelog",
  "windows-sys",
 ]
 
