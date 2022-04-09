@@ -15,6 +15,12 @@ git clone https://github.com/hamflx/huawei-pc-manager-bootstrap.git
 cd huawei-pc-manager-bootstrap
 cargo +nightly-i686-pc-windows-msvc build --target=i686-pc-windows-msvc
 cargo +nightly-x86_64-pc-windows-msvc build --target=x86_64-pc-windows-msvc
+
+cargo +nightly-x86_64-pc-windows-msvc build -p version --target=x86_64-pc-windows-msvc
+cargo +nightly-i686-pc-windows-msvc run -p huawei-pc-manager-bootstrap --target=i686-pc-windows-msvc
+
+cargo +nightly-x86_64-pc-windows-msvc build -p version --target=x86_64-pc-windows-msvc
+cargo +nightly-i686-pc-windows-msvc build -p huawei-pc-manager-bootstrap --target=i686-pc-windows-msvc
 ```
 
 构建成功后，将会在该目录 `target\i686-pc-windows-msvc\debug\program-bootstrap.exe` 中看到 `program-bootstrap.exe`。开启一个管理员（华为电脑管家安装需要管理员权限）命令行窗口，进入到该目录运行：

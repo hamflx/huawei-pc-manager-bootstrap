@@ -1,3 +1,4 @@
+use std::ffi::CStr;
 use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
@@ -14,15 +15,53 @@ use eframe::{egui, epi};
 use log::{info, warn, LevelFilter};
 use rfd::FileDialog;
 use simplelog::{ConfigBuilder, WriteLogger};
+use windows_sys::Win32::UI::Shell::{SHGetSpecialFolderPathA, CSIDL_PROGRAM_FILES};
 
 pub struct BootstrapApp {
     log_file_path: String,
     executable_file_path: String,
     status_text: String,
     log_text: String,
+    ipc_logger_address: Option<String>,
 }
 
+const TIPS_BROWSE: &'static str = "点击“浏览”按钮选择华为电脑管家安装包（如：PCManager_Setup_12.0.1.26(C233D003).exe），然后点击“安装”。";
+const TIPS_AUTO_SCAN: &'static str =
+    "自动扫描当前目录下的华为电脑管家安装包，找到安装包后，需要点击“安装”按钮进行安装。";
+const TIPS_AUTO_SCAN_FOUND: &'static str = "已找到安装包，点击“安装”按钮进行安装。";
+const TIPS_AUTO_SCAN_NOT_FOUND: &'static str = "未找到安装包！";
+
 impl BootstrapApp {
+    fn auto_scan(&mut self) -> anyhow::Result<bool> {
+        let dirs = [
+            std::env::current_exe()?
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("current_exe() failed"))?
+                .to_path_buf(),
+            std::env::current_dir()?,
+        ];
+        for dir in dirs {
+            for file in std::fs::read_dir(dir)? {
+                let file = file?;
+                let file_path = file.path();
+                if let Some(file_name) = file_path.file_name() {
+                    if let Some(file_name) = file_name.to_str() {
+                        if file_name
+                            .to_lowercase()
+                            .contains(&"PCManager_Setup".to_lowercase())
+                        {
+                            if let Some(file_path) = file_path.to_str() {
+                                self.executable_file_path = file_path.to_owned();
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
     fn select_file(&mut self) {
         let executable_file = FileDialog::new()
             .add_filter("exe", &["exe"])
@@ -49,15 +88,20 @@ impl BootstrapApp {
         Ok(())
     }
 
-    fn start_install(&self) -> anyhow::Result<()> {
+    fn start_ipc_logger(&mut self) -> anyhow::Result<()> {
         let server = InterProcessComServer::listen("127.0.0.1:0")?;
         let address = server.get_address()?;
         server.start();
 
-        info!("Listening on {}", address.to_string());
+        self.ipc_logger_address = Some(address.to_string());
+        info!("Listening on {}", self.ipc_logger_address.as_ref().unwrap());
 
+        Ok(())
+    }
+
+    fn start_install(&self) -> anyhow::Result<()> {
         common::common::enable_hook(Some(InjectOptions {
-            server_address: Some(address.to_string()),
+            server_address: self.ipc_logger_address.clone(),
             inject_sub_process: true,
         }))?;
 
@@ -80,6 +124,51 @@ impl BootstrapApp {
             }
             thread::sleep(Duration::from_millis(50));
         }
+
+        Ok(())
+    }
+
+    fn install_all(&self) -> anyhow::Result<()> {
+        self.start_install()?;
+        self.install_patch()?;
+        Ok(())
+    }
+
+    fn install_patch(&self) -> anyhow::Result<()> {
+        #[cfg(debug_assertions)]
+        let patch_file_bytes =
+            include_bytes!("../../../target/x86_64-pc-windows-msvc/debug/version.dll");
+        #[cfg(not(debug_assertions))]
+        let patch_file_bytes =
+            include_bytes!("../../../target/x86_64-pc-windows-msvc/release/version.dll");
+        let mut path_buffer = [0; 4096];
+        let get_dir_success = unsafe {
+            SHGetSpecialFolderPathA(
+                0,
+                path_buffer.as_mut_ptr(),
+                CSIDL_PROGRAM_FILES.try_into().unwrap(),
+                0,
+            )
+        } != 0;
+        if !get_dir_success {
+            return Err(anyhow::anyhow!(
+                "SHGetSpecialFolderPathA failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        let program_files_dir =
+            unsafe { CStr::from_ptr(path_buffer.as_ptr() as *const i8).to_str()? };
+        let x86_suffix = " (x86)";
+        let program_files_dir = if program_files_dir.ends_with(x86_suffix) {
+            &program_files_dir[..program_files_dir.len() - x86_suffix.len()]
+        } else {
+            program_files_dir
+        };
+
+        let pc_manager_dir: PathBuf = [program_files_dir, "Huawei", "PCManager"].iter().collect();
+        let target_version_dll_path = pc_manager_dir.join("version.dll");
+        std::fs::write(&target_version_dll_path, patch_file_bytes)?;
 
         Ok(())
     }
@@ -111,7 +200,7 @@ impl Default for BootstrapApp {
         let now = chrono::Local::now();
         log_file_path.push(format!("app-{}.log", now.format("%Y%m%d%H%M%S")));
         let log_file_path = log_file_path.to_str().unwrap().to_owned();
-        let status_text= String::from("点击“浏览”按钮选择华为电脑管家安装包（如：PCManager_Setup_12.0.1.26(C233D003).exe），然后点击“安装”。") ;
+        let status_text = String::from(TIPS_BROWSE);
         let log_text = format!("这里是日志区域，但是我跟编译器搏斗了半天，仍然是没能把日志输出到这里，只能把日志输出到文件：\n{}", log_file_path);
 
         Self {
@@ -119,6 +208,7 @@ impl Default for BootstrapApp {
             executable_file_path: String::new(),
             status_text,
             log_text,
+            ipc_logger_address: None,
         }
     }
 }
@@ -157,6 +247,12 @@ impl epi::App for BootstrapApp {
 
         if let Err(err) = self.setup_logger() {
             self.status_text = format!("Error: {}", err);
+            return;
+        }
+
+        if let Err(err) = self.start_ipc_logger() {
+            self.status_text = format!("Error: {}", err);
+            return;
         }
     }
 
@@ -177,15 +273,41 @@ impl epi::App for BootstrapApp {
                     );
                 });
                 ui.horizontal(|ui| {
-                    if ui.button("浏览").clicked() {
+                    let auto_scan_button = ui.button("自动扫描").on_hover_text(TIPS_AUTO_SCAN);
+                    if auto_scan_button.clicked() {
+                        match self.auto_scan() {
+                            Ok(true) => {
+                                self.status_text = String::from(TIPS_AUTO_SCAN_FOUND);
+                            }
+                            Ok(false) => {
+                                self.status_text = String::from(TIPS_AUTO_SCAN_NOT_FOUND);
+                            }
+                            Err(err) => {
+                                self.status_text = format!("Error: {}", err);
+                                warn!("Error: {}", err);
+                            }
+                        }
+                    }
+
+                    let browse_button = ui.button("浏览").on_hover_text(TIPS_BROWSE);
+                    if browse_button.clicked() {
                         self.select_file();
                     }
+
                     if ui.button("安装").clicked() {
-                        if let Err(err) = self.start_install() {
+                        if let Err(err) = self.install_all() {
                             self.status_text = format!("Installing failed: {}", err);
                             warn!("Installing failed: {}", err);
                         }
                     }
+
+                    if ui.button("安装补丁").clicked() {
+                        if let Err(err) = self.install_patch() {
+                            self.status_text = format!("Installing failed: {}", err);
+                            warn!("Installing failed: {}", err);
+                        }
+                    }
+
                     if ui.button("打开日志").clicked() {
                         self.open_log_file();
                     }
