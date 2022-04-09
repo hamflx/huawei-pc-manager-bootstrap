@@ -376,67 +376,78 @@ fn detour_create_process(
     }
 }
 
-pub fn enable_hook(opts: Option<InjectOptions>) {
+pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
     let inject_sub_process = opts
         .as_ref()
         .map(|opts| opts.inject_sub_process)
         .unwrap_or(false);
     unsafe {
-        let fp_create_process: FnCreateProcessW =
-            transmute(get_proc_address("CreateProcessW", "kernel32.dll").unwrap());
-        let fp_get_system_firmware_table: FnGetSystemFirmwareTable =
-            transmute(get_proc_address("GetSystemFirmwareTable", "kernel32.dll").unwrap());
-        let fp_enum_system_firmware_tables: FnEnumSystemFirmwareTables =
-            transmute(get_proc_address("EnumSystemFirmwareTables", "kernel32.dll").unwrap());
+        let fp_create_process: FnCreateProcessW = transmute(
+            get_proc_address("CreateProcessW", "kernel32.dll").ok_or_else(|| {
+                anyhow::anyhow!("GetProcAddress(CreateProcessW) failed: {}", GetLastError())
+            })?,
+        );
+        let fp_get_system_firmware_table: FnGetSystemFirmwareTable = transmute(
+            get_proc_address("GetSystemFirmwareTable", "kernel32.dll").ok_or_else(|| {
+                anyhow::anyhow!(
+                    "GetProcAddress(GetSystemFirmwareTable) failed: {}",
+                    GetLastError()
+                )
+            })?,
+        );
+        let fp_enum_system_firmware_tables: FnEnumSystemFirmwareTables = transmute(
+            get_proc_address("EnumSystemFirmwareTables", "kernel32.dll").ok_or_else(|| {
+                anyhow::anyhow!(
+                    "GetProcAddress(EnumSystemFirmwareTables) failed: {}",
+                    GetLastError()
+                )
+            })?,
+        );
 
         let opts = Box::leak(Box::new(opts));
-        HookGetSystemFirmwareTable
-            .initialize(
-                fp_get_system_firmware_table,
-                detour_get_system_firmware_table,
-            )
-            .unwrap();
-        HookEnumSystemFirmwareTables
-            .initialize(
-                fp_enum_system_firmware_tables,
-                detour_enum_system_firmware_tables,
-            )
-            .unwrap();
-        HookCreateProcessW
-            .initialize(
-                fp_create_process,
-                |app_name,
-                 cmd_line,
-                 proc_attrs,
-                 th_attrs,
-                 inherit,
-                 flags,
-                 env,
-                 cur_dir,
-                 startup_info,
-                 proc_info| {
-                    detour_create_process(
-                        opts,
-                        app_name,
-                        cmd_line,
-                        proc_attrs,
-                        th_attrs,
-                        inherit,
-                        flags,
-                        env,
-                        cur_dir,
-                        startup_info,
-                        proc_info,
-                    )
-                },
-            )
-            .unwrap();
-        HookGetSystemFirmwareTable.enable().unwrap();
-        HookEnumSystemFirmwareTables.enable().unwrap();
+        HookGetSystemFirmwareTable.initialize(
+            fp_get_system_firmware_table,
+            detour_get_system_firmware_table,
+        )?;
+        HookEnumSystemFirmwareTables.initialize(
+            fp_enum_system_firmware_tables,
+            detour_enum_system_firmware_tables,
+        )?;
+        HookCreateProcessW.initialize(
+            fp_create_process,
+            |app_name,
+             cmd_line,
+             proc_attrs,
+             th_attrs,
+             inherit,
+             flags,
+             env,
+             cur_dir,
+             startup_info,
+             proc_info| {
+                detour_create_process(
+                    opts,
+                    app_name,
+                    cmd_line,
+                    proc_attrs,
+                    th_attrs,
+                    inherit,
+                    flags,
+                    env,
+                    cur_dir,
+                    startup_info,
+                    proc_info,
+                )
+            },
+        )?;
+        HookGetSystemFirmwareTable.enable()?;
+        HookEnumSystemFirmwareTables.enable()?;
         if inject_sub_process {
-            HookCreateProcessW.enable().unwrap();
+            HookCreateProcessW.enable()?;
         }
     }
+
+    Ok(())
 }
 
 unsafe fn get_proc_address(proc_name: &str, module_name: &str) -> FARPROC {
