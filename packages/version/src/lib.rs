@@ -4,6 +4,7 @@ use std::{
     slice::from_raw_parts_mut,
 };
 
+use common::common::InjectOptions;
 use log::{error, info};
 use simplelog::{Config, LevelFilter, WriteLogger};
 use windows_sys::Win32::{
@@ -66,7 +67,10 @@ pub fn initialize(inst: HINSTANCE) -> anyhow::Result<()> {
         // };
     }
 
-    common::common::enable_hook(None);
+    common::common::enable_hook(Some(InjectOptions {
+        server_address: None,
+        inject_sub_process: false,
+    }));
 
     Ok(())
 }

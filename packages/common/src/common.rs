@@ -33,6 +33,7 @@ use windows_sys::{
 #[derive(Serialize, Deserialize, Clone)]
 pub struct InjectOptions {
     pub server_address: Option<String>,
+    pub inject_sub_process: bool,
 }
 
 #[repr(C)]
@@ -376,6 +377,10 @@ fn detour_create_process(
 }
 
 pub fn enable_hook(opts: Option<InjectOptions>) {
+    let inject_sub_process = opts
+        .as_ref()
+        .map(|opts| opts.inject_sub_process)
+        .unwrap_or(false);
     unsafe {
         let fp_create_process: FnCreateProcessW =
             transmute(get_proc_address("CreateProcessW", "kernel32.dll").unwrap());
@@ -428,7 +433,9 @@ pub fn enable_hook(opts: Option<InjectOptions>) {
             .unwrap();
         HookGetSystemFirmwareTable.enable().unwrap();
         HookEnumSystemFirmwareTables.enable().unwrap();
-        HookCreateProcessW.enable().unwrap();
+        if inject_sub_process {
+            HookCreateProcessW.enable().unwrap();
+        }
     }
 }
 

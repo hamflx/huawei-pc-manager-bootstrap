@@ -37,6 +37,7 @@ impl BootstrapApp {
 
         common::common::enable_hook(Some(InjectOptions {
             server_address: Some(address.to_string()),
+            inject_sub_process: true,
         }));
 
         info!("Executing {}", self.executable_file_path);
