@@ -33,3 +33,38 @@ cd huawei-pc-manager-bootstrap
 
 1. 安装器启动安装包进行安装，在安装包执行 `"C:\Program Files\Huawei\PCManager\tmp\MBAInstallPre.exe" isSupportDevice` 和 `"C:\Program Files\Huawei\PCManager\tmp\MBAInstallPre.exe" IsSupportBaZhang` 时，结束该进程，并返回一个通过的值。
 2. 上一步仅能保证能安装成功，但是在打开华为电脑管家时交互有些异常，以及一些联网功能无法使用。因此通过 `dll` 劫持让华为电脑管家加载自己开发的 `version.dll` 然后在该 `dll` 加载时，劫持 `GetSystemFirmwareTable` 函数，返回一个华为的型号即可。
+
+## 相关资料整理
+
+- 本文参考来源：
+
+  - [[原创]非华为电脑安装华为电脑管家分析]("https://bbs.pediy.com/thread-270682.htm")
+
+- 其他安装工具 —— @汉客儿
+
+  - [非华为电脑安装电脑管家最新版11多屏协同]("https://www.hankeer.org/article/non-huawei-computer-install-pcmanager.html")
+  - [魔法电脑：你们一直想要的开机启动]("https://www.hankeer.org/article/magiccomputer_1.1.3.5.html")
+
+- 其他安装工具 —— @空降猫咪
+
+  - [【教程】非华为电脑管家安装教程（傻瓜式）]("https://club.huawei.com/thread-30452752-1-1.html")
+
+- 其他安装工具 —— @猫咪冰冰
+
+  - `OpenCore` 魔改版（类似黑苹果，这就叫黑华为了），群内部资源，未在互联网上面找到公开的资料。
+
+- 已知支持的网卡：
+
+  | 英特尔 | 高通 | 备注 |
+  | --- | --- | --- |
+  | ax210 | | |
+  | as201 | | |
+  | ax200 | killer 1650x | |
+  | ac9560 | | |
+  | ac9462 | | |
+  | ac9260 | killer 1550 | |
+  | ac8265 | | |
+  | AC3165 | | @丘之小透明：AC3165是可以的[捂脸]，本人联想y70002018款，就是那个超级终端只能在没连接的时候显示，一旦用超级终端连接后超级终端就消失了[捂脸] |
+  | | | @小布尔乔亚之敌：小新pro14 intel版亲测可用 |
+
+  来源：<https://zhuanlan.zhihu.com/p/387604394>
