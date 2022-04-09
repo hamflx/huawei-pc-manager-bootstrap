@@ -1,11 +1,11 @@
 use std::{
     ffi::{c_void, CString},
-    fs::File,
+    fs::OpenOptions,
     slice::from_raw_parts_mut,
 };
 
 use common::common::InjectOptions;
-use log::{error, info};
+use log::{error, info, warn};
 use simplelog::{Config, LevelFilter, WriteLogger};
 use windows_sys::Win32::{
     Foundation::{GetLastError, HINSTANCE},
@@ -39,20 +39,9 @@ pub extern "system" fn DllMain(inst: HINSTANCE, reason: u32, _: *const u8) -> u3
 }
 
 pub fn initialize(inst: HINSTANCE) -> anyhow::Result<()> {
-    let project_dir = directories::ProjectDirs::from("cn", "hamflx", "huawei_pc_manager_bootstrap")
-        .ok_or_else(|| anyhow::anyhow!("No project dir"))?;
-    let cache_dir = project_dir.cache_dir();
-    std::fs::create_dir_all(cache_dir)?;
-
-    let mut log_file_path = cache_dir.to_path_buf();
-    let now = chrono::Local::now();
-    log_file_path.push(format!("hijacking-{}.log", now.format("%Y%m%d%H%M%S")));
-
-    WriteLogger::init(
-        LevelFilter::Info,
-        Config::default(),
-        File::create(log_file_path)?,
-    )?;
+    if let Err(err) = initialize_logger() {
+        warn!("Failed to initialize logger: {}", err);
+    }
 
     if let Err(err) = install_all_jumpers(inst) {
         error!("{}", err);
@@ -72,6 +61,39 @@ pub fn initialize(inst: HINSTANCE) -> anyhow::Result<()> {
         inject_sub_process: false,
         includes_system_process: false,
     }))?;
+
+    Ok(())
+}
+
+fn initialize_logger() -> anyhow::Result<()> {
+    let project_dir = directories::ProjectDirs::from("cn", "hamflx", "huawei_pc_manager_bootstrap")
+        .ok_or_else(|| anyhow::anyhow!("No project dir"))?;
+    let cache_dir = project_dir.cache_dir();
+    std::fs::create_dir_all(cache_dir)?;
+
+    let mut log_file_path = cache_dir.to_path_buf();
+    let now = chrono::Local::now();
+    let exe_path_buf = std::env::current_exe()?;
+    let exe_name = exe_path_buf
+        .file_stem()
+        .map_or(None, |s| s.to_str())
+        .unwrap_or("NoExeName");
+    let pid = std::process::id();
+    log_file_path.push(format!(
+        "hijacking-{}-{}-{}.log",
+        exe_name,
+        pid,
+        now.format("%Y%m%d%H%M%S")
+    ));
+
+    WriteLogger::init(
+        LevelFilter::Info,
+        Config::default(),
+        OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(log_file_path)?,
+    )?;
 
     Ok(())
 }
