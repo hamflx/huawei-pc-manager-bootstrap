@@ -10,7 +10,7 @@ use common::communication::InterProcessComServer;
 use eframe::egui::FontDefinitions;
 use eframe::epaint::FontFamily;
 use eframe::{egui, epi};
-use log::{info, warn, LevelFilter};
+use log::{error, info, warn, LevelFilter};
 use rfd::FileDialog;
 use simplelog::{ConfigBuilder, WriteLogger};
 use windows_sys::Win32::UI::Shell::{SHGetSpecialFolderPathA, CSIDL_PROGRAM_FILES};
@@ -86,6 +86,14 @@ impl BootstrapApp {
         Ok(())
     }
 
+    fn install_hooks(&self) -> anyhow::Result<()> {
+        common::common::enable_hook(Some(InjectOptions {
+            server_address: self.ipc_logger_address.clone(),
+            inject_sub_process: true,
+            includes_system_process: false,
+        }))
+    }
+
     fn start_ipc_logger(&mut self) -> anyhow::Result<()> {
         let server = InterProcessComServer::listen("127.0.0.1:0")?;
         let address = server.get_address()?;
@@ -98,11 +106,6 @@ impl BootstrapApp {
     }
 
     fn start_install(&self) -> anyhow::Result<()> {
-        common::common::enable_hook(Some(InjectOptions {
-            server_address: self.ipc_logger_address.clone(),
-            inject_sub_process: true,
-        }))?;
-
         let executable_file_path = self.executable_file_path.clone();
         let _ = thread::spawn(move || {
             info!("Executing {}", executable_file_path);
@@ -278,11 +281,19 @@ impl epi::App for BootstrapApp {
 
         if let Err(err) = self.setup_logger() {
             self.status_text = format!("Error: {}", err);
+            error!("Failed to setup logger: {}", err);
             return;
         }
 
         if let Err(err) = self.start_ipc_logger() {
             self.status_text = format!("Error: {}", err);
+            error!("Failed to start ipc logger: {}", err);
+            return;
+        }
+
+        if let Err(err) = self.install_hooks() {
+            self.status_text = format!("Error: {}", err);
+            error!("Failed to install hooks: {}", err);
             return;
         }
     }

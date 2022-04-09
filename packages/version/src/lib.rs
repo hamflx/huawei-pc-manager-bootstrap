@@ -70,6 +70,7 @@ pub fn initialize(inst: HINSTANCE) -> anyhow::Result<()> {
     common::common::enable_hook(Some(InjectOptions {
         server_address: None,
         inject_sub_process: false,
+        includes_system_process: false,
     }))?;
 
     Ok(())

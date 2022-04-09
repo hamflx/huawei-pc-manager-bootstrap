@@ -19,7 +19,8 @@ use windows_sys::{
             LibraryLoader::{GetModuleFileNameA, GetProcAddress, LoadLibraryA},
             Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE},
             SystemInformation::{
-                GetNativeSystemInfo, FIRMWARE_TABLE_ID, FIRMWARE_TABLE_PROVIDER, SYSTEM_INFO,
+                GetNativeSystemInfo, GetSystemDirectoryA, FIRMWARE_TABLE_ID,
+                FIRMWARE_TABLE_PROVIDER, SYSTEM_INFO,
             },
             Threading::{
                 CreateRemoteThread, GetCurrentProcess, GetExitCodeThread, GetThreadId,
@@ -34,6 +35,7 @@ use windows_sys::{
 pub struct InjectOptions {
     pub server_address: Option<String>,
     pub inject_sub_process: bool,
+    pub includes_system_process: bool,
 }
 
 #[repr(C)]
@@ -360,8 +362,22 @@ fn detour_create_process(
                 TerminateProcess((*proc_info).hProcess, 2);
                 return creating_res;
             }
-            if let Err(err) = inject_to_process((*proc_info).hProcess, opts) {
-                warn!("inject_to_process error: {}", err);
+            let should_inject = opts
+                .as_ref()
+                .map(|opts| {
+                    opts.includes_system_process
+                        || (!app_name_string.trim().is_empty()
+                            && !check_path_is_system(app_name_string.as_str())
+                            || !cmd_line_string.trim().is_empty()
+                                && !check_path_is_system(cmd_line_string.as_str()))
+                })
+                .unwrap_or(true);
+            if should_inject {
+                if let Err(err) = inject_to_process((*proc_info).hProcess, opts) {
+                    warn!("inject_to_process error: {}", err);
+                }
+            } else {
+                info!("Skip system process.");
             }
             if flags & CREATE_SUSPENDED == 0 {
                 if ResumeThread((*proc_info).hThread) == u32::MAX {
@@ -462,6 +478,21 @@ unsafe fn get_proc_address(proc_name: &str, module_name: &str) -> FARPROC {
     GetProcAddress(h_inst, proc_name_cstr.as_ptr() as PCSTR)
 }
 
+fn check_path_is_system(path: &str) -> bool {
+    let mut path_buffer = [0; 4096];
+    let size = unsafe { GetSystemDirectoryA(path_buffer.as_mut_ptr(), path_buffer.len() as u32) };
+    if size > 0 {
+        if let Ok(sys_dir) = String::from_utf8(path_buffer[..size as usize].to_vec()) {
+            let slash_sys_dir = sys_dir.replace("\\", "/");
+            let slash_path = path.replace("\\", "/");
+            return slash_path.starts_with(&slash_sys_dir)
+                || (slash_path.chars().nth(0) == Some('"')
+                    && slash_path[1..].starts_with(&slash_sys_dir));
+        }
+    }
+    false
+}
+
 unsafe fn inject_to_process(
     process_handle: HANDLE,
     opts: &Option<InjectOptions>,
@@ -471,8 +502,8 @@ unsafe fn inject_to_process(
     if is_target_x86 != is_self_x86 {
         return Err(anyhow::anyhow!(
             "Process architecture mismatch, expect {} got {}",
-            if is_target_x86 { "x86" } else { "x64" },
-            if is_self_x86 { "x86" } else { "x64" }
+            if is_self_x86 { "x86" } else { "x64" },
+            if is_target_x86 { "x86" } else { "x64" }
         ));
     }
 
