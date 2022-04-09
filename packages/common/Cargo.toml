@@ -21,4 +21,3 @@ windows-sys = { version = "0.35.0", features = [
   "Win32_System_SystemInformation"
 ] }
 serde = { version = "1.0", features = ["derive"] }
-simple_logger = "2.1.0"

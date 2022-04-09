@@ -1,26 +1,27 @@
-use std::{
-    ffi::{c_void, CString},
-    fs::OpenOptions,
-    slice::from_raw_parts_mut,
-};
+use std::{arch::asm, ffi::CString, fs::OpenOptions};
 
 use common::common::InjectOptions;
-use log::{error, info, warn};
+use log::{error, info};
 use simplelog::{Config, LevelFilter, WriteLogger};
 use windows_sys::Win32::{
     Foundation::{GetLastError, HINSTANCE},
-    System::{
-        LibraryLoader::{GetProcAddress, LoadLibraryA},
-        Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE},
-    },
+    System::LibraryLoader::{FreeLibrary, GetProcAddress, LoadLibraryA},
 };
 
+static mut TARGET_FUNC_ADDRESS: [usize; 17] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
 macro_rules! export_function {
-    ($($proc:ident)*) => {
+    ($($proc:ident $index:expr)*) => {
         $(
             #[no_mangle]
             pub extern "system" fn $proc() -> u32 {
-                println!("==> do sth.");
+                unsafe {
+                    asm!(
+                        "jmp rax",
+                        in("rax") TARGET_FUNC_ADDRESS[$index],
+                        options(nostack)
+                    );
+                }
                 1
             }
         )*
@@ -28,22 +29,24 @@ macro_rules! export_function {
 }
 
 #[no_mangle]
-pub extern "system" fn DllMain(inst: HINSTANCE, reason: u32, _: *const u8) -> u32 {
+pub extern "system" fn DllMain(_inst: HINSTANCE, reason: u32, _: *const u8) -> u32 {
     if reason == 1 {
-        if let Err(err) = initialize(inst) {
-            println!("{}", err);
+        if let Err(err) = initialize() {
+            error!("{}", err);
             return 0;
+        } else {
+            info!("Version Injector initialized");
         }
     }
     1
 }
 
-pub fn initialize(inst: HINSTANCE) -> anyhow::Result<()> {
+pub fn initialize() -> anyhow::Result<()> {
     if let Err(err) = initialize_logger() {
-        warn!("Failed to initialize logger: {}", err);
+        eprintln!("Failed to initialize logger: {}", err);
     }
 
-    if let Err(err) = install_all_jumpers(inst) {
+    if let Err(err) = install_all_jumpers() {
         error!("{}", err);
     } else {
         // unsafe {
@@ -98,75 +101,59 @@ fn initialize_logger() -> anyhow::Result<()> {
     Ok(())
 }
 
-export_function!(GetFileVersionInfoA);
-export_function!(GetFileVersionInfoByHandle);
-export_function!(GetFileVersionInfoExA);
-export_function!(GetFileVersionInfoExW);
-export_function!(GetFileVersionInfoSizeA);
-export_function!(GetFileVersionInfoSizeExA);
-export_function!(GetFileVersionInfoSizeExW);
-export_function!(GetFileVersionInfoSizeW);
-export_function!(GetFileVersionInfoW);
-export_function!(VerFindFileA);
-export_function!(VerFindFileW);
-export_function!(VerInstallFileA);
-export_function!(VerInstallFileW);
-export_function!(VerLanguageNameA);
-export_function!(VerLanguageNameW);
-export_function!(VerQueryValueA);
-export_function!(VerQueryValueW);
+export_function!(GetFileVersionInfoA 0);
+export_function!(GetFileVersionInfoByHandle 1);
+export_function!(GetFileVersionInfoExA 2);
+export_function!(GetFileVersionInfoExW 3);
+export_function!(GetFileVersionInfoSizeA 4);
+export_function!(GetFileVersionInfoSizeExA 5);
+export_function!(GetFileVersionInfoSizeExW 6);
+export_function!(GetFileVersionInfoSizeW 7);
+export_function!(GetFileVersionInfoW 8);
+export_function!(VerFindFileA 9);
+export_function!(VerFindFileW 10);
+export_function!(VerInstallFileA 11);
+export_function!(VerInstallFileW 12);
+export_function!(VerLanguageNameA 13);
+export_function!(VerLanguageNameW 14);
+export_function!(VerQueryValueA 15);
+export_function!(VerQueryValueW 16);
 
-pub fn install_all_jumpers(inst: HINSTANCE) -> anyhow::Result<()> {
-    make_proc_jump_to_real_address(inst, "version.dll", "GetFileVersionInfoA")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "GetFileVersionInfoByHandle")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "GetFileVersionInfoExA")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "GetFileVersionInfoExW")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "GetFileVersionInfoSizeA")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "GetFileVersionInfoSizeExA")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "GetFileVersionInfoSizeExW")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "GetFileVersionInfoSizeW")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "GetFileVersionInfoW")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "VerFindFileA")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "VerFindFileW")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "VerInstallFileA")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "VerInstallFileW")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "VerLanguageNameA")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "VerLanguageNameW")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "VerQueryValueA")?;
-    make_proc_jump_to_real_address(inst, "version.dll", "VerQueryValueW")?;
+pub fn install_all_jumpers() -> anyhow::Result<()> {
+    make_proc_jump_to_real_address("version.dll", 0, "GetFileVersionInfoA")?;
+    make_proc_jump_to_real_address("version.dll", 1, "GetFileVersionInfoByHandle")?;
+    make_proc_jump_to_real_address("version.dll", 2, "GetFileVersionInfoExA")?;
+    make_proc_jump_to_real_address("version.dll", 3, "GetFileVersionInfoExW")?;
+    make_proc_jump_to_real_address("version.dll", 4, "GetFileVersionInfoSizeA")?;
+    make_proc_jump_to_real_address("version.dll", 5, "GetFileVersionInfoSizeExA")?;
+    make_proc_jump_to_real_address("version.dll", 6, "GetFileVersionInfoSizeExW")?;
+    make_proc_jump_to_real_address("version.dll", 7, "GetFileVersionInfoSizeW")?;
+    make_proc_jump_to_real_address("version.dll", 8, "GetFileVersionInfoW")?;
+    make_proc_jump_to_real_address("version.dll", 9, "VerFindFileA")?;
+    make_proc_jump_to_real_address("version.dll", 10, "VerFindFileW")?;
+    make_proc_jump_to_real_address("version.dll", 11, "VerInstallFileA")?;
+    make_proc_jump_to_real_address("version.dll", 12, "VerInstallFileW")?;
+    make_proc_jump_to_real_address("version.dll", 13, "VerLanguageNameA")?;
+    make_proc_jump_to_real_address("version.dll", 14, "VerLanguageNameW")?;
+    make_proc_jump_to_real_address("version.dll", 15, "VerQueryValueA")?;
+    make_proc_jump_to_real_address("version.dll", 16, "VerQueryValueW")?;
 
     Ok(())
 }
 
 pub fn make_proc_jump_to_real_address(
-    inst: HINSTANCE,
     target_module: &str,
+    index: usize,
     proc_name: &str,
 ) -> anyhow::Result<()> {
-    info!("Installing jumper for {}", proc_name);
     let load_module_dir = "C:\\Windows\\System32\\";
     let module_full_path = format!("{}{}", load_module_dir, target_module);
-    let addr_in_current_module = get_proc_address_by_module(inst, proc_name)?;
     let addr_in_remote_module = get_proc_address(module_full_path.as_str(), proc_name)?;
-    let protect_success = unsafe {
-        let mut old_protect = 0;
-        VirtualProtect(
-            addr_in_current_module as *const c_void,
-            12,
-            PAGE_EXECUTE_READWRITE,
-            &mut old_protect,
-        )
-    } != 0;
-    if !protect_success {
-        return Err(anyhow::anyhow!("VirtualProtect failed: {}", unsafe {
-            GetLastError()
-        }));
-    }
+
     unsafe {
-        let mut bytes: [u8; 12] = [0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xe0];
-        bytes[2..10].copy_from_slice((addr_in_remote_module as u64).to_le_bytes().as_slice());
-        from_raw_parts_mut(addr_in_current_module as *mut _, 12).copy_from_slice(&bytes);
+        TARGET_FUNC_ADDRESS[index] = addr_in_remote_module as *const usize as usize;
     }
+
     Ok(())
 }
 
@@ -192,6 +179,8 @@ pub fn get_proc_address(
         if module_handle == 0 {
             return Err(anyhow::anyhow!("LoadLibraryA failed: {:x}", GetLastError()));
         }
-        get_proc_address_by_module(module_handle, proc_name)
+        let proc_address = get_proc_address_by_module(module_handle, proc_name);
+        FreeLibrary(module_handle);
+        proc_address
     }
 }
