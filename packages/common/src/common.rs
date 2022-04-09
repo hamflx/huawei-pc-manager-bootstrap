@@ -455,6 +455,16 @@ unsafe fn inject_to_process(
     process_handle: HANDLE,
     opts: &Option<InjectOptions>,
 ) -> anyhow::Result<()> {
+    let is_target_x86 = is_process_x86(process_handle)?;
+    let is_self_x86 = is_process_x86(GetCurrentProcess())?;
+    if is_target_x86 != is_self_x86 {
+        return Err(anyhow::anyhow!(
+            "Process architecture mismatch, expect {} got {}",
+            if is_target_x86 { "x86" } else { "x64" },
+            if is_self_x86 { "x86" } else { "x64" }
+        ));
+    }
+
     let mut lib_full_path = std::env::current_exe()?
         .parent()
         .ok_or_else(|| anyhow::anyhow!("No path content"))?
@@ -466,16 +476,6 @@ unsafe fn inject_to_process(
     info!("Get enable_hook address from {}", lib_full_path);
     let fp_enable_hook = get_proc_address("enable_hook", lib_full_path)
         .ok_or_else(|| anyhow::anyhow!("No enable_hook function found"))?;
-
-    let is_target_x86 = is_process_x86(process_handle)?;
-    let is_self_x86 = is_process_x86(GetCurrentProcess())?;
-    if is_target_x86 != is_self_x86 {
-        return Err(anyhow::anyhow!(
-            "Process architecture mismatch, expect {} got {}",
-            if is_target_x86 { "x86" } else { "x64" },
-            if is_self_x86 { "x86" } else { "x64" }
-        ));
-    }
 
     let library_name_with_null = format!("{}\0", LIBRARY_NAME);
     let core_module_handle = LoadLibraryA(library_name_with_null.as_ptr() as PCSTR);
