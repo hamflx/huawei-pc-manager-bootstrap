@@ -240,15 +240,19 @@ fn construct_own_sys_info(
     product_name: &str,
     version: &str,
     sn: &str,
-    _sku: &str,
+    sku: &str,
 ) -> Vec<u8> {
-    let sys_info_data = format!("{}\0{}\0{}\0{}\0", manufacture, product_name, version, sn);
+    let sys_info_data = format!(
+        "{}\0{}\0{}\0{}\0{}\0",
+        manufacture, product_name, version, sn, sku
+    );
 
     unsafe {
         (*sys_info_header).Manufacturer = 1;
         (*sys_info_header).ProductName = 2;
         (*sys_info_header).Version = 3;
         (*sys_info_header).SN = 4;
+        (*sys_info_header).SKUNumber = 5;
 
         (*sys_info_header).WakeUpType = 0;
         (*sys_info_header).SKUNumber = 0;
@@ -336,6 +340,7 @@ fn detour_create_process(
             U16CString::from_ptr_str(cmd_line).to_string().unwrap()
         };
         info!("CreateProcessW: {} {}", app_name_string, cmd_line_string);
+
         let flags_with_suspend = CREATE_SUSPENDED | flags;
         let creating_res = HookCreateProcessW.call(
             app_name,
@@ -403,6 +408,8 @@ pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
                 anyhow::anyhow!("GetProcAddress(CreateProcessW) failed: {}", GetLastError())
             })?,
         );
+        info!("Got CreateProcessW: 0x{:x}", fp_create_process as usize);
+
         let fp_get_system_firmware_table: FnGetSystemFirmwareTable = transmute(
             get_proc_address("GetSystemFirmwareTable", "kernel32.dll").ok_or_else(|| {
                 anyhow::anyhow!(
@@ -411,6 +418,11 @@ pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
                 )
             })?,
         );
+        info!(
+            "Got GetSystemFirmwareTable: 0x{:x}",
+            fp_get_system_firmware_table as usize
+        );
+
         let fp_enum_system_firmware_tables: FnEnumSystemFirmwareTables = transmute(
             get_proc_address("EnumSystemFirmwareTables", "kernel32.dll").ok_or_else(|| {
                 anyhow::anyhow!(
@@ -419,16 +431,24 @@ pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
                 )
             })?,
         );
+        info!(
+            "Got EnumSystemFirmwareTables: 0x{:x}",
+            fp_enum_system_firmware_tables as usize
+        );
 
         let opts = Box::leak(Box::new(opts));
         HookGetSystemFirmwareTable.initialize(
             fp_get_system_firmware_table,
             detour_get_system_firmware_table,
         )?;
+        info!("HookGetSystemFirmwareTable initialized");
+
         HookEnumSystemFirmwareTables.initialize(
             fp_enum_system_firmware_tables,
             detour_enum_system_firmware_tables,
         )?;
+        info!("HookEnumSystemFirmwareTables initialized");
+
         HookCreateProcessW.initialize(
             fp_create_process,
             |app_name,
@@ -456,10 +476,15 @@ pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
                 )
             },
         )?;
+        info!("HookCreateProcessW initialized");
         HookGetSystemFirmwareTable.enable()?;
+        info!("HookGetSystemFirmwareTable enabled");
         HookEnumSystemFirmwareTables.enable()?;
+        info!("HookEnumSystemFirmwareTables enabled");
+
         if inject_sub_process {
             HookCreateProcessW.enable()?;
+            info!("HookCreateProcessW enabled");
         }
     }
 
