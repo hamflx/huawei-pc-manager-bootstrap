@@ -8,7 +8,7 @@ use std::thread;
 use common::common::InjectOptions;
 use common::communication::InterProcessComServer;
 use eframe::egui::FontDefinitions;
-use eframe::epaint::FontFamily;
+use eframe::epaint::{vec2, FontFamily};
 use eframe::{egui, epi};
 use log::{error, info, warn, LevelFilter};
 use rfd::FileDialog;
@@ -318,9 +318,10 @@ impl epi::App for BootstrapApp {
     fn setup(
         &mut self,
         ctx: &egui::Context,
-        _frame: &epi::Frame,
+        frame: &epi::Frame,
         _storage: Option<&dyn epi::Storage>,
     ) {
+        frame.set_window_size(vec2(862f32, 562f32));
         let mut fonts = FontDefinitions::default();
         let sys_font = std::fs::read("c:/Windows/Fonts/msyh.ttc").unwrap();
         fonts
