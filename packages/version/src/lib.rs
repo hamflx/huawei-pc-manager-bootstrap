@@ -41,14 +41,17 @@ pub extern "system" fn DllMain(_inst: HINSTANCE, reason: u32, _: *const u8) -> u
     1
 }
 
-pub fn initialize() -> anyhow::Result<()> {
+pub fn initialize() -> anyhow::Result<bool> {
+    let result_of_install_jumpers = install_all_jumpers();
+
     if let Err(err) = initialize_logger() {
         eprintln!("Failed to initialize logger: {}", err);
     }
 
-    if let Err(err) = install_all_jumpers() {
+    if let Err(err) = &result_of_install_jumpers {
         error!("{}", err);
     } else {
+        info!("All jumpers installed");
         // unsafe {
         //     windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxA(
         //         0,
@@ -59,13 +62,20 @@ pub fn initialize() -> anyhow::Result<()> {
         // };
     }
 
-    common::common::enable_hook(Some(InjectOptions {
+    match common::common::enable_hook(Some(InjectOptions {
         server_address: None,
         inject_sub_process: false,
         includes_system_process: false,
-    }))?;
+    })) {
+        Ok(_) => {
+            info!("Version hooks installed");
+        }
+        Err(err) => {
+            error!("Enabling hook failed: {}", err);
+        }
+    }
 
-    Ok(())
+    result_of_install_jumpers.map(|_| true)
 }
 
 fn initialize_logger() -> anyhow::Result<()> {
