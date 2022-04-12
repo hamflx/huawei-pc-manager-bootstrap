@@ -38,16 +38,16 @@ cd huawei-pc-manager-bootstrap
 
 - 本文参考来源：
 
-  - [[原创]非华为电脑安装华为电脑管家分析]("https://bbs.pediy.com/thread-270682.htm")
+  - [[原创]非华为电脑安装华为电脑管家分析](https://bbs.pediy.com/thread-270682.htm)
 
 - 其他安装工具 —— @汉客儿
 
-  - [非华为电脑安装电脑管家最新版11多屏协同]("https://www.hankeer.org/article/non-huawei-computer-install-pcmanager.html")
-  - [魔法电脑：你们一直想要的开机启动]("https://www.hankeer.org/article/magiccomputer_1.1.3.5.html")
+  - [非华为电脑安装电脑管家最新版11多屏协同](https://www.hankeer.org/article/non-huawei-computer-install-pcmanager.html)
+  - [魔法电脑：你们一直想要的开机启动](https://www.hankeer.org/article/magiccomputer_1.1.3.5.html)
 
 - 其他安装工具 —— @空降猫咪
 
-  - [【教程】非华为电脑管家安装教程（傻瓜式）]("https://club.huawei.com/thread-30452752-1-1.html")
+  - [【教程】非华为电脑管家安装教程（傻瓜式）](https://club.huawei.com/thread-30452752-1-1.html)
 
 - 其他安装工具 —— @猫咪冰冰
 
