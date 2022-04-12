@@ -99,11 +99,6 @@ type FnGetSystemFirmwareTable = unsafe extern "system" fn(
     *mut ::core::ffi::c_void,
     u32,
 ) -> u32;
-type FnEnumSystemFirmwareTables = unsafe extern "system" fn(
-    firmwaretableprovidersignature: FIRMWARE_TABLE_PROVIDER,
-    pfirmwaretableenumbuffer: *mut FIRMWARE_TABLE_ID,
-    buffersize: u32,
-) -> u32;
 
 static_detour! {
     static HookCreateProcessW: unsafe extern "system" fn(
@@ -122,11 +117,6 @@ static_detour! {
         u32,
         u32,
         *mut c_void,
-        u32
-    ) -> u32;
-  static HookEnumSystemFirmwareTables: unsafe extern "system" fn(
-        u32,
-        *mut u32,
         u32
     ) -> u32;
 }
@@ -293,27 +283,6 @@ fn str_len(cstr: *const u8) -> usize {
     return count;
 }
 
-fn detour_enum_system_firmware_tables(
-    firmwaretableprovidersignature: FIRMWARE_TABLE_PROVIDER,
-    pfirmwaretableenumbuffer: *mut FIRMWARE_TABLE_ID,
-    buffersize: u32,
-) -> u32 {
-    let sig_name = get_firmware_table_provider_signature(firmwaretableprovidersignature);
-    info!(
-        "Calling EnumSystemFirmwareTables: {}, 0x{:x}, {}",
-        sig_name, pfirmwaretableenumbuffer as usize, buffersize
-    );
-
-    let result = unsafe {
-        HookEnumSystemFirmwareTables.call(
-            firmwaretableprovidersignature,
-            pfirmwaretableenumbuffer,
-            buffersize,
-        )
-    };
-    result
-}
-
 #[allow(clippy::too_many_arguments)]
 fn detour_create_process(
     opts: &Option<InjectOptions>,
@@ -423,31 +392,12 @@ pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
             fp_get_system_firmware_table as usize
         );
 
-        let fp_enum_system_firmware_tables: FnEnumSystemFirmwareTables = transmute(
-            get_proc_address("EnumSystemFirmwareTables", "kernel32.dll").ok_or_else(|| {
-                anyhow::anyhow!(
-                    "GetProcAddress(EnumSystemFirmwareTables) failed: {}",
-                    GetLastError()
-                )
-            })?,
-        );
-        info!(
-            "Got EnumSystemFirmwareTables: 0x{:x}",
-            fp_enum_system_firmware_tables as usize
-        );
-
         let opts = Box::leak(Box::new(opts));
         HookGetSystemFirmwareTable.initialize(
             fp_get_system_firmware_table,
             detour_get_system_firmware_table,
         )?;
         info!("HookGetSystemFirmwareTable initialized");
-
-        HookEnumSystemFirmwareTables.initialize(
-            fp_enum_system_firmware_tables,
-            detour_enum_system_firmware_tables,
-        )?;
-        info!("HookEnumSystemFirmwareTables initialized");
 
         HookCreateProcessW.initialize(
             fp_create_process,
@@ -479,8 +429,6 @@ pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
         info!("HookCreateProcessW initialized");
         HookGetSystemFirmwareTable.enable()?;
         info!("HookGetSystemFirmwareTable enabled");
-        HookEnumSystemFirmwareTables.enable()?;
-        info!("HookEnumSystemFirmwareTables enabled");
 
         if inject_sub_process {
             HookCreateProcessW.enable()?;
@@ -497,7 +445,7 @@ unsafe fn get_proc_address(proc_name: &str, module_name: &str) -> FARPROC {
     let h_inst = LoadLibraryA(module_name_cstr.as_ptr() as PCSTR);
 
     if h_inst == 0 {
-        panic!("LoadLibraryA failed: {}", GetLastError());
+        return None;
     }
 
     GetProcAddress(h_inst, proc_name_cstr.as_ptr() as PCSTR)

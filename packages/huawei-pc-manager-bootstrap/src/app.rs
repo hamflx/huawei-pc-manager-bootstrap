@@ -13,6 +13,7 @@ use eframe::{egui, epi};
 use log::{error, info, warn, LevelFilter};
 use rfd::FileDialog;
 use simplelog::{ConfigBuilder, WriteLogger};
+use sysinfo::{ProcessExt, SystemExt};
 use windows_sys::Win32::UI::Shell::{SHGetSpecialFolderPathA, CSIDL_PROGRAM_FILES};
 
 pub struct BootstrapApp {
@@ -58,6 +59,67 @@ impl BootstrapApp {
             }
         }
         Ok(false)
+    }
+
+    fn terminate_all_processes() -> anyhow::Result<()> {
+        let hw_process = [
+            r"WeLook.exe",
+            r"WebViewer.exe",
+            r"UninstallGuide.exe",
+            r"UltraSoundUI.exe",
+            r"ScreenSnipper.exe",
+            r"RepairPCManager.exe",
+            r"PerfWndMonHelper_x86.exe",
+            r"PerfWndMonHelper.exe",
+            r"PCManager.exe",
+            r"PairDeviceDes.exe",
+            r"OTAWndShow.exe",
+            r"OpenDir.exe",
+            r"OobeMain.exe",
+            r"OneKeyReset.exe",
+            r"OfficeFileMonitor.exe",
+            r"NPSPopwnd.exe",
+            r"MessageCenterUI.exe",
+            r"MBAMessageCenter.exe",
+            r"MBAInstallPre.exe",
+            r"MateBookService.exe",
+            r"HWVCR.exe",
+            r"HwTrayWndHelper.exe",
+            r"HwshareUI.exe",
+            r"HwSmartAudio.exe",
+            r"HwSettings.exe",
+            r"HwPhotoViewer.exe",
+            r"HwMirrorDragDropWnd.exe",
+            r"HwMirror.exe",
+            r"HwMdcUI.exe",
+            r"HwMdcCenter.exe",
+            r"HwFeaPromoUI.exe",
+            r"HwExScreen.exe",
+            r"HWAccountUI.exe",
+            r"hmdfsservice.exe",
+            r"HiboardDataReport.exe",
+            r"GetClipContent.exe",
+            r"FreeTouchUI.exe",
+            r"DumpReport.exe",
+            r"DragFileProgress.exe",
+            r"distributedfileservice.exe",
+            r"DFSSearchUI.exe",
+            r"DFSSearchService.exe",
+            r"AdvancedService.exe",
+        ];
+        let mut system = sysinfo::System::new();
+        system.refresh_processes();
+        for (_pid, process) in system.processes() {
+            let process_name = process.name();
+            let is_hw_process = hw_process
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(process_name));
+            if is_hw_process {
+                info!("Found hw process: {}", process_name);
+                process.kill();
+            }
+        }
+        Ok(())
     }
 
     fn select_file(&mut self) {
@@ -340,6 +402,9 @@ impl epi::App for BootstrapApp {
                         if let Err(err) = self.start_install() {
                             self.status_text = format!("Installing failed: {}", err);
                             warn!("Installing failed: {}", err);
+                        } else {
+                            self.status_text = "安装成功。".to_owned();
+                            info!("PCManager installed successfully.");
                         }
                     }
 
@@ -347,6 +412,19 @@ impl epi::App for BootstrapApp {
                         if let Err(err) = Self::install_patch() {
                             self.status_text = format!("Installing failed: {}", err);
                             warn!("Installing failed: {}", err);
+                        } else {
+                            self.status_text = "安装成功。".to_owned();
+                            info!("Patch installed successfully");
+                        }
+                    }
+
+                    if ui.button("终止所有进程").clicked() {
+                        if let Err(err) = Self::terminate_all_processes() {
+                            self.status_text = format!("Failed to kill all processes: {}", err);
+                            warn!("Failed to kill all processes: {}", err);
+                        } else {
+                            self.status_text = "执行成功。".to_owned();
+                            info!("Huawei process terminated successfully");
                         }
                     }
 
