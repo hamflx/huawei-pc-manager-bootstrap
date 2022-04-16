@@ -5,7 +5,10 @@ use log::{error, info};
 use simplelog::{Config, LevelFilter, WriteLogger};
 use windows_sys::Win32::{
     Foundation::{GetLastError, HINSTANCE},
-    System::LibraryLoader::{FreeLibrary, GetProcAddress, LoadLibraryA},
+    System::LibraryLoader::{
+        GetModuleHandleExA, GetProcAddress, LoadLibraryA, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        GET_MODULE_HANDLE_EX_FLAG_PIN,
+    },
 };
 
 static mut TARGET_FUNC_ADDRESS: [usize; 17] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -29,9 +32,9 @@ macro_rules! export_function {
 }
 
 #[no_mangle]
-pub extern "system" fn DllMain(_inst: HINSTANCE, reason: u32, _: *const u8) -> u32 {
+pub extern "system" fn DllMain(inst: HINSTANCE, reason: u32, _: *const u8) -> u32 {
     if reason == 1 {
-        if let Err(err) = initialize() {
+        if let Err(err) = initialize(inst) {
             error!("{}", err);
             return 0;
         } else {
@@ -41,7 +44,22 @@ pub extern "system" fn DllMain(_inst: HINSTANCE, reason: u32, _: *const u8) -> u
     1
 }
 
-pub fn initialize() -> anyhow::Result<bool> {
+pub fn initialize(inst: HINSTANCE) -> anyhow::Result<bool> {
+    let mut module_handle = 0;
+    let pin_success = unsafe {
+        GetModuleHandleExA(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            inst as *const u8,
+            &mut module_handle,
+        )
+    } != 0;
+    if !pin_success {
+        return Err(anyhow::anyhow!(
+            "Failed to pin module handle: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
     let result_of_install_jumpers = install_all_jumpers();
 
     if let Err(err) = initialize_logger() {
@@ -190,7 +208,6 @@ pub fn get_proc_address(
             return Err(anyhow::anyhow!("LoadLibraryA failed: {:x}", GetLastError()));
         }
         let proc_address = get_proc_address_by_module(module_handle, proc_name);
-        FreeLibrary(module_handle);
         proc_address
     }
 }
