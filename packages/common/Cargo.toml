@@ -21,3 +21,4 @@ windows-sys = { version = "0.35.0", features = [
   "Win32_System_SystemInformation"
 ] }
 serde = { version = "1.0", features = ["derive"] }
+lazy_static = "1.4.0"

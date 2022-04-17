@@ -1,12 +1,13 @@
 use detour::static_detour;
-use log::{info, warn};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{c_void, CStr, CString},
     intrinsics::transmute,
     mem::MaybeUninit,
     ptr,
-    slice::from_raw_parts,
+    slice::{from_raw_parts, from_raw_parts_mut},
+    sync::Mutex,
 };
 use widestring::U16CString;
 use windows_sys::{
@@ -58,7 +59,7 @@ pub struct RawSMBIOSData {
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 #[allow(non_snake_case)]
 pub struct SMBIOSHEADER {
     pub Type: u8,
@@ -67,7 +68,7 @@ pub struct SMBIOSHEADER {
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 #[allow(non_snake_case)]
 pub struct SystemInfo {
     pub Header: SMBIOSHEADER,
@@ -122,6 +123,126 @@ static_detour! {
 }
 
 static LIBRARY_NAME: &str = "huawei_pc_manager_bootstrap_core.dll";
+static SMBIOS_FIRMWARE_TABLE_PROVIDER: u32 = 1381190978;
+static SMBIOS_FIRMWARE_TABLE_ID: u32 = 0;
+
+lazy_static::lazy_static! {
+    static ref CUSTOM_SMBIOS_BUFFER: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+}
+
+fn is_args_can_hook(
+    firmwaretableprovidersignature: FIRMWARE_TABLE_PROVIDER,
+    firmwaretableid: FIRMWARE_TABLE_ID,
+) -> bool {
+    firmwaretableprovidersignature == SMBIOS_FIRMWARE_TABLE_PROVIDER
+        && firmwaretableid == SMBIOS_FIRMWARE_TABLE_ID
+}
+
+fn get_and_cache_firmware_table() -> anyhow::Result<()> {
+    if CUSTOM_SMBIOS_BUFFER
+        .lock()
+        .map_err(|err| anyhow::anyhow!("Failed to lock custom smbios data buffer: {}", err))?
+        .is_some()
+    {
+        info!("Using cached custom smbios data");
+        return Ok(());
+    }
+
+    let buffer_size = unsafe {
+        HookGetSystemFirmwareTable.call(
+            SMBIOS_FIRMWARE_TABLE_PROVIDER,
+            SMBIOS_FIRMWARE_TABLE_ID,
+            0 as *mut c_void,
+            0,
+        )
+    };
+    if buffer_size == 0 {
+        return Err(anyhow::anyhow!(
+            "Failed to get firmware table: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    let mut buffer: Vec<u8> = vec![0; buffer_size as usize];
+    let buffer_size = unsafe {
+        HookGetSystemFirmwareTable.call(
+            SMBIOS_FIRMWARE_TABLE_PROVIDER,
+            SMBIOS_FIRMWARE_TABLE_ID,
+            buffer.as_mut_ptr() as *mut c_void,
+            buffer.len() as u32,
+        )
+    };
+    if buffer_size == 0 {
+        return Err(anyhow::anyhow!(
+            "Failed to get firmware table: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    CUSTOM_SMBIOS_BUFFER
+        .lock()
+        .map_err(|err| anyhow::anyhow!("Failed to lock custom smbios data buffer: {}", err))?
+        .replace(replace_smbios_manufacture(buffer));
+
+    Ok(())
+}
+
+fn replace_smbios_manufacture(mut smbios_data: Vec<u8>) -> Vec<u8> {
+    unsafe {
+        let raw_bios_ptr = smbios_data.as_mut_ptr() as *mut RawSMBIOSData;
+        let start_entry_ptr: *mut u8 = transmute(&(*raw_bios_ptr).SMBIOSTableData);
+        let end_ptr = start_entry_ptr.add((*raw_bios_ptr).Length as usize);
+        let mut header_ptr: *mut SMBIOSHEADER = transmute(start_entry_ptr as *mut u8);
+        let mut smbios_entry_list: Vec<Vec<u8>> = vec![];
+
+        while (header_ptr as usize) < end_ptr as usize {
+            let mut next_header = (header_ptr as *const u8).offset((*header_ptr).Length.into());
+            while 0 != (*next_header | *(next_header.offset(1)))
+                && (next_header as usize) < end_ptr as usize
+            {
+                next_header = next_header.offset(1);
+            }
+            next_header = next_header.offset(2);
+
+            let header_length =
+                std::cmp::min(next_header as usize, end_ptr as usize) - (header_ptr as usize);
+            if header_length > 0 {
+                smbios_entry_list
+                    .push(from_raw_parts(header_ptr as *const u8, header_length).to_vec());
+            }
+
+            header_ptr = next_header as *mut SMBIOSHEADER;
+        }
+
+        let mut custom_smbios_data =
+            smbios_data[..start_entry_ptr as usize - raw_bios_ptr as usize].to_vec();
+        custom_smbios_data.append(
+            &mut smbios_entry_list
+                .into_iter()
+                .map(|entry| {
+                    if entry.first() == Some(&1) {
+                        let new_sys_entry = construct_own_sys_info(
+                            "HUAWEI",
+                            "HKD-WXX",
+                            "1.0",
+                            "5EKPM18320000397",
+                            "C233",
+                        );
+                        dump_sys_info(&*(new_sys_entry.as_ptr() as *const SystemInfo));
+                        new_sys_entry
+                    } else {
+                        entry
+                    }
+                })
+                .fold(vec![], |mut vec, mut entry| {
+                    vec.append(&mut entry);
+                    vec
+                }),
+        );
+
+        custom_smbios_data
+    }
+}
 
 fn detour_get_system_firmware_table(
     firmwaretableprovidersignature: FIRMWARE_TABLE_PROVIDER,
@@ -141,91 +262,75 @@ fn detour_get_system_firmware_table(
         buffersize
     );
 
-    let result = unsafe {
+    if is_args_can_hook(firmwaretableprovidersignature, firmwaretableid) {
+        let cache_smbios_buffer_result = get_and_cache_firmware_table();
+        if cache_smbios_buffer_result.is_ok() {
+            match CUSTOM_SMBIOS_BUFFER.lock() {
+                Ok(buffer) => {
+                    if let Some(buffer) = buffer.as_ref() {
+                        if pfirmwaretablebuffer as usize == 0 {
+                            info!("Need {} bytes buffer", buffer.len());
+                            return buffer.len() as u32;
+                        }
+                        let dest: &mut [u8] = unsafe {
+                            from_raw_parts_mut(pfirmwaretablebuffer as *mut u8, buffersize as usize)
+                        };
+                        let min_size = std::cmp::min(dest.len(), buffer.len());
+                        dest.copy_from_slice(&buffer[0..min_size]);
+                        info!("Copied {} bytes from buffer", min_size);
+                        return min_size as u32;
+                    }
+                    error!("Failed to get custom smbios buffer");
+                }
+                Err(err) => {
+                    error!("Failed to lock custom smbios data buffer: {}", err);
+                }
+            }
+        } else {
+            error!(
+                "Failed to get and cache firmware table: {}",
+                cache_smbios_buffer_result.unwrap_err()
+            );
+        }
+        return 0;
+    }
+
+    unsafe {
         HookGetSystemFirmwareTable.call(
             firmwaretableprovidersignature,
             firmwaretableid,
             pfirmwaretablebuffer,
             buffersize,
         )
-    };
-    if result != 0 && !pfirmwaretablebuffer.is_null() {
-        unsafe {
-            let raw_bios_ptr = pfirmwaretablebuffer as *mut RawSMBIOSData;
-            let start_ptr: *mut u8 = transmute(&(*raw_bios_ptr).SMBIOSTableData);
-            let end_ptr = start_ptr.add((*raw_bios_ptr).Length as usize);
-            let mut header_ptr: *mut SMBIOSHEADER = transmute(start_ptr as *mut u8);
-
-            loop {
-                if (*header_ptr).Type == 1 {
-                    // http://huaweisn.com/
-                    let new_sys_info = construct_own_sys_info(
-                        header_ptr as *mut SystemInfo,
-                        "HUAWEI",
-                        "HKD-WXX",
-                        "1.0",
-                        "5EKPM18320000397",
-                        "C233",
-                    );
-                    let first_str_ptr = (header_ptr as *mut u8).add((*header_ptr).Length as usize);
-                    new_sys_info
-                        .iter()
-                        .enumerate()
-                        .for_each(|(i, ch)| *(first_str_ptr.add(i)) = *ch);
-
-                    dump_sys_info(header_ptr);
-                }
-
-                if (*header_ptr).Type == 127 && (*header_ptr).Length == 4 {
-                    break;
-                }
-
-                let mut next_header = (header_ptr as *const u8).offset((*header_ptr).Length.into());
-                while 0 != (*next_header | *(next_header.offset(1))) {
-                    next_header = next_header.offset(1);
-                }
-                next_header = next_header.offset(2);
-                if next_header >= end_ptr {
-                    break;
-                }
-                header_ptr = next_header as *mut SMBIOSHEADER;
-            }
-        }
     }
-    result
 }
 
-fn dump_sys_info(header_ptr: *const SMBIOSHEADER) {
-    let system_info_ptr = header_ptr as *const SystemInfo;
-    let first_str_ptr = unsafe { (header_ptr as *const u8).add((*header_ptr).Length as usize) };
+fn dump_sys_info(sys_info: &SystemInfo) {
+    let first_str_ptr = unsafe {
+        (sys_info as *const SystemInfo as *const u8).add(sys_info.Header.Length as usize)
+    };
     info!(
         "Manufacturer: {}",
-        locate_string(first_str_ptr, unsafe { (*system_info_ptr).Manufacturer })
+        locate_string(first_str_ptr, sys_info.Manufacturer)
             .unwrap_or_else(|| String::from("No Manufacturer"))
     );
     info!(
         "ProductName: {}",
-        locate_string(first_str_ptr, unsafe { (*system_info_ptr).ProductName })
+        locate_string(first_str_ptr, sys_info.ProductName)
             .unwrap_or_else(|| String::from("No ProductName"))
     );
     info!(
         "Version: {}",
-        locate_string(first_str_ptr, unsafe { (*system_info_ptr).Version })
+        locate_string(first_str_ptr, sys_info.Version)
             .unwrap_or_else(|| String::from("No Version"))
     );
     info!(
         "SN: {}",
-        locate_string(first_str_ptr, unsafe { (*system_info_ptr).SN })
-            .unwrap_or_else(|| String::from("No SN"))
-    );
-    info!(
-        "SysInfoData: {:?}",
-        String::from_utf8_lossy(unsafe { from_raw_parts(first_str_ptr, 100) })
+        locate_string(first_str_ptr, sys_info.SN).unwrap_or_else(|| String::from("No SN"))
     );
 }
 
 fn construct_own_sys_info(
-    sys_info_header: *mut SystemInfo,
     manufacture: &str,
     product_name: &str,
     version: &str,
@@ -233,23 +338,38 @@ fn construct_own_sys_info(
     sku: &str,
 ) -> Vec<u8> {
     let sys_info_data = format!(
-        "{}\0{}\0{}\0{}\0{}\0",
+        "{}\0{}\0{}\0{}\0{}\0\0",
         manufacture, product_name, version, sn, sku
     );
 
-    unsafe {
-        (*sys_info_header).Manufacturer = 1;
-        (*sys_info_header).ProductName = 2;
-        (*sys_info_header).Version = 3;
-        (*sys_info_header).SN = 4;
-        (*sys_info_header).SKUNumber = 5;
+    let mut sys_info = SystemInfo::default();
 
-        (*sys_info_header).WakeUpType = 0;
-        (*sys_info_header).SKUNumber = 0;
-        (*sys_info_header).Family = 0;
-    }
+    sys_info.Header.Length = std::mem::size_of_val(&sys_info) as u8;
+    sys_info.Header.Type = 1;
+    sys_info.Header.Handle = 1;
 
-    sys_info_data.as_bytes().to_vec()
+    sys_info.Manufacturer = 1;
+    sys_info.ProductName = 2;
+    sys_info.Version = 3;
+    sys_info.SN = 4;
+    sys_info.SKUNumber = 5;
+
+    sys_info.WakeUpType = 0;
+    sys_info.SKUNumber = 0;
+    sys_info.Family = 0;
+    sys_info.UUID = [0; 16];
+
+    let mut entry_data = vec![];
+
+    entry_data.append(&mut unsafe {
+        from_raw_parts(
+            &sys_info as *const SystemInfo as *const u8,
+            std::mem::size_of_val(&sys_info),
+        )
+        .to_vec()
+    });
+    entry_data.append(&mut sys_info_data.as_bytes().to_vec());
+    entry_data
 }
 
 fn locate_string(oem_str: *const u8, index: u8) -> Option<String> {

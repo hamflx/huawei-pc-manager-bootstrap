@@ -370,6 +370,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "detour",
+ "lazy_static",
  "log",
  "serde",
  "widestring",
