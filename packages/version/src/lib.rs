@@ -11,26 +11,6 @@ use windows_sys::Win32::{
     },
 };
 
-static mut TARGET_FUNC_ADDRESS: [usize; 17] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-
-macro_rules! export_function {
-    ($($proc:ident $index:expr)*) => {
-        $(
-            #[no_mangle]
-            pub extern "system" fn $proc() -> u32 {
-                unsafe {
-                    asm!(
-                        "jmp rax",
-                        in("rax") TARGET_FUNC_ADDRESS[$index],
-                        options(nostack)
-                    );
-                }
-                1
-            }
-        )*
-    };
-}
-
 #[no_mangle]
 pub extern "system" fn DllMain(inst: HINSTANCE, reason: u32, _: *const u8) -> u32 {
     if reason == 1 {
@@ -60,7 +40,7 @@ pub fn initialize(inst: HINSTANCE) -> anyhow::Result<bool> {
         ));
     }
 
-    let result_of_install_jumpers = install_all_jumpers();
+    let result_of_install_jumpers = unsafe { EXPORT_VERSION_FUNCTIONS.install_all_jumpers() };
 
     if let Err(err) = initialize_logger() {
         eprintln!("Failed to initialize logger: {}", err);
@@ -129,60 +109,91 @@ fn initialize_logger() -> anyhow::Result<()> {
     Ok(())
 }
 
-export_function!(GetFileVersionInfoA 0);
-export_function!(GetFileVersionInfoByHandle 1);
-export_function!(GetFileVersionInfoExA 2);
-export_function!(GetFileVersionInfoExW 3);
-export_function!(GetFileVersionInfoSizeA 4);
-export_function!(GetFileVersionInfoSizeExA 5);
-export_function!(GetFileVersionInfoSizeExW 6);
-export_function!(GetFileVersionInfoSizeW 7);
-export_function!(GetFileVersionInfoW 8);
-export_function!(VerFindFileA 9);
-export_function!(VerFindFileW 10);
-export_function!(VerInstallFileA 11);
-export_function!(VerInstallFileW 12);
-export_function!(VerLanguageNameA 13);
-export_function!(VerLanguageNameW 14);
-export_function!(VerQueryValueA 15);
-export_function!(VerQueryValueW 16);
-
-pub fn install_all_jumpers() -> anyhow::Result<()> {
-    make_proc_jump_to_real_address("version.dll", 0, "GetFileVersionInfoA")?;
-    make_proc_jump_to_real_address("version.dll", 1, "GetFileVersionInfoByHandle")?;
-    make_proc_jump_to_real_address("version.dll", 2, "GetFileVersionInfoExA")?;
-    make_proc_jump_to_real_address("version.dll", 3, "GetFileVersionInfoExW")?;
-    make_proc_jump_to_real_address("version.dll", 4, "GetFileVersionInfoSizeA")?;
-    make_proc_jump_to_real_address("version.dll", 5, "GetFileVersionInfoSizeExA")?;
-    make_proc_jump_to_real_address("version.dll", 6, "GetFileVersionInfoSizeExW")?;
-    make_proc_jump_to_real_address("version.dll", 7, "GetFileVersionInfoSizeW")?;
-    make_proc_jump_to_real_address("version.dll", 8, "GetFileVersionInfoW")?;
-    make_proc_jump_to_real_address("version.dll", 9, "VerFindFileA")?;
-    make_proc_jump_to_real_address("version.dll", 10, "VerFindFileW")?;
-    make_proc_jump_to_real_address("version.dll", 11, "VerInstallFileA")?;
-    make_proc_jump_to_real_address("version.dll", 12, "VerInstallFileW")?;
-    make_proc_jump_to_real_address("version.dll", 13, "VerLanguageNameA")?;
-    make_proc_jump_to_real_address("version.dll", 14, "VerLanguageNameW")?;
-    make_proc_jump_to_real_address("version.dll", 15, "VerQueryValueA")?;
-    make_proc_jump_to_real_address("version.dll", 16, "VerQueryValueW")?;
-
-    Ok(())
+macro_rules! count {
+    () => (0usize);
+    ( $x:tt $($xs:tt)* ) => (1usize + count!($($xs)*));
 }
 
-pub fn make_proc_jump_to_real_address(
-    target_module: &str,
-    index: usize,
-    proc_name: &str,
-) -> anyhow::Result<()> {
-    let load_module_dir = "C:\\Windows\\System32\\";
-    let module_full_path = format!("{}{}", load_module_dir, target_module);
-    let addr_in_remote_module = get_proc_address(module_full_path.as_str(), proc_name)?;
+macro_rules! define_functions {
+    ($lib:expr, $name:ident, $($proc:ident)*) => {
+        static mut $name: ExportFunctions<{ count!($($proc)*) }> = ExportFunctions{
+            lib_name: $lib,
+            target_functions_address: [
+                0;
+                count!($($proc)*)
+            ],
+            target_function_names: [
+                $(stringify!($proc),)*
+            ]
+        };
+        define_function!($name, 0, $($proc)*);
+    };
+}
 
-    unsafe {
-        TARGET_FUNC_ADDRESS[index] = addr_in_remote_module as *const usize as usize;
+macro_rules! define_function {
+    ($name:ident, $index:expr, ) => {};
+    ($name:ident, $index:expr, $proc:ident $($procs:ident)*) => {
+        #[no_mangle]
+        pub extern "system" fn $proc() -> u32 {
+            unsafe {
+                asm!(
+                    "jmp rax",
+                    in("rax") $name.target_functions_address[$index],
+                    options(nostack)
+                );
+            }
+            1
+        }
+        define_function!($name, ($index + 1), $($procs)*);
+    };
+}
+
+define_functions!(
+    "version.dll",
+    EXPORT_VERSION_FUNCTIONS,
+    GetFileVersionInfoA
+    GetFileVersionInfoByHandle
+    GetFileVersionInfoExA
+    GetFileVersionInfoExW
+    GetFileVersionInfoSizeA
+    GetFileVersionInfoSizeExA
+    GetFileVersionInfoSizeExW
+    GetFileVersionInfoSizeW
+    GetFileVersionInfoW
+    VerFindFileA
+    VerFindFileW
+    VerInstallFileA
+    VerInstallFileW
+    VerLanguageNameA
+    VerLanguageNameW
+    VerQueryValueA
+    VerQueryValueW
+);
+
+pub struct ExportFunctions<const N: usize> {
+    pub target_functions_address: [usize; N],
+    pub target_function_names: [&'static str; N],
+    pub lib_name: &'static str,
+}
+
+impl<const N: usize> ExportFunctions<N> {
+    pub fn make_proc_jump_to_real_address(&mut self, index: usize) -> anyhow::Result<()> {
+        let load_module_dir = "C:\\Windows\\System32\\";
+        let module_full_path = format!("{}{}", load_module_dir, self.lib_name);
+        let addr_in_remote_module =
+            get_proc_address(module_full_path.as_str(), self.target_function_names[index])?;
+
+        self.target_functions_address[index] = addr_in_remote_module as *const usize as usize;
+
+        Ok(())
     }
 
-    Ok(())
+    pub fn install_all_jumpers(&mut self) -> anyhow::Result<()> {
+        for index in 0..self.target_functions_address.len() {
+            self.make_proc_jump_to_real_address(index)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn get_proc_address_by_module(
