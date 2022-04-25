@@ -13,4 +13,4 @@ common = { path = "../common" }
 simplelog = "0.11.2"
 directories = "4.0.1"
 log = "0.4.14"
-forward-dll = "0.1.1"
+forward-dll = "0.1.2"

@@ -5,7 +5,7 @@ use log::{error, info};
 use simplelog::{Config, LevelFilter, WriteLogger};
 
 forward_dll::forward_dll!(
-    "version.dll",
+    "C:\\Windows\\system32\\version.dll",
     DLL_VERSION_FORWARDER,
     GetFileVersionInfoA
     GetFileVersionInfoByHandle
@@ -27,9 +27,9 @@ forward_dll::forward_dll!(
 );
 
 #[no_mangle]
-pub extern "system" fn DllMain(inst: isize, reason: u32, _: *const u8) -> u32 {
+pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
     if reason == 1 {
-        if let Err(err) = initialize(inst) {
+        if let Err(err) = initialize() {
             error!("{}", err);
             return 0;
         } else {
@@ -39,8 +39,8 @@ pub extern "system" fn DllMain(inst: isize, reason: u32, _: *const u8) -> u32 {
     1
 }
 
-pub fn initialize(inst: isize) -> anyhow::Result<bool> {
-    forward_dll::keep_module_in_memory(inst)?;
+pub fn initialize() -> anyhow::Result<bool> {
+    forward_dll::load_library("C:\\Windows\\system32\\version.dll")?;
 
     let result_of_install_jumpers = unsafe { DLL_VERSION_FORWARDER.forward_all() };
 
