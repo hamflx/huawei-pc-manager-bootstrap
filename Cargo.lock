@@ -934,9 +934,9 @@ dependencies = [
 
 [[package]]
 name = "forward-dll"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f545a0d8060adf8a6ff0f862a46aa3f767a282a427eb7c3011807162d6f8cb23"
+checksum = "ceae811e7d4a2cb719cc6ef163225970e8a3b101e9f1ad2b52a5cc3e948efdb4"
 dependencies = [
  "windows-sys",
 ]
