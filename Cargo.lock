@@ -883,6 +883,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "forward-dll"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "034ea52f1e49f07d3a61d9af8387791dc0d9de81373c95c8d1098808aed60c9e"
+dependencies = [
+ "windows-sys",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2299,6 +2308,7 @@ dependencies = [
  "chrono",
  "common",
  "directories",
+ "forward-dll",
  "log",
  "simplelog",
  "windows-sys",
