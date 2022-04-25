@@ -31,6 +31,10 @@ const TIPS_AUTO_SCAN_FOUND: &'static str = "已找到安装包，点击“安装
 const TIPS_AUTO_SCAN_NOT_FOUND: &'static str = "未找到安装包！";
 
 impl BootstrapApp {
+    pub fn set_executable_file_path(&mut self, path: String) {
+        self.executable_file_path = path;
+    }
+
     fn auto_scan(&mut self) -> anyhow::Result<bool> {
         let dirs = [
             std::env::current_exe()?
@@ -61,7 +65,7 @@ impl BootstrapApp {
         Ok(false)
     }
 
-    fn terminate_all_processes() -> anyhow::Result<()> {
+    pub fn terminate_all_processes() -> anyhow::Result<()> {
         let hw_process = [
             r"WeLook.exe",
             r"WebViewer.exe",
@@ -134,7 +138,7 @@ impl BootstrapApp {
         }
     }
 
-    fn setup_logger(&self) -> anyhow::Result<()> {
+    pub fn setup_logger(&self) -> anyhow::Result<()> {
         let config = ConfigBuilder::new()
             .set_target_level(LevelFilter::Error)
             .build();
@@ -148,7 +152,7 @@ impl BootstrapApp {
         Ok(())
     }
 
-    fn install_hooks(&self) -> anyhow::Result<()> {
+    pub fn install_hooks(&self) -> anyhow::Result<()> {
         common::common::enable_hook(Some(InjectOptions {
             server_address: self.ipc_logger_address.clone(),
             inject_sub_process: true,
@@ -156,7 +160,7 @@ impl BootstrapApp {
         }))
     }
 
-    fn start_ipc_logger(&mut self) -> anyhow::Result<()> {
+    pub fn start_ipc_logger(&mut self) -> anyhow::Result<()> {
         let server = InterProcessComServer::listen("127.0.0.1:0")?;
         let address = server.get_address()?;
         server.start();
@@ -167,9 +171,9 @@ impl BootstrapApp {
         Ok(())
     }
 
-    fn start_install(&self) -> anyhow::Result<()> {
+    pub fn start_install(&self, wait: bool) -> anyhow::Result<()> {
         let executable_file_path = self.executable_file_path.clone();
-        let _ = thread::spawn(move || {
+        let install_thread = thread::spawn(move || {
             info!("Executing {}", executable_file_path);
             match Command::new(&executable_file_path).spawn() {
                 Ok(mut wait_handle) => {
@@ -217,10 +221,14 @@ impl BootstrapApp {
             }
         });
 
+        if wait {
+            install_thread.join().unwrap();
+        }
+
         Ok(())
     }
 
-    fn install_patch() -> anyhow::Result<()> {
+    pub fn install_patch() -> anyhow::Result<()> {
         #[cfg(debug_assertions)]
         let patch_file_bytes =
             include_bytes!("../../../target/x86_64-pc-windows-msvc/debug/version.dll");
@@ -400,7 +408,7 @@ impl epi::App for BootstrapApp {
                     }
 
                     if ui.button("安装").clicked() {
-                        if let Err(err) = self.start_install() {
+                        if let Err(err) = self.start_install(false) {
                             self.status_text = format!("Installing failed: {}", err);
                             warn!("Installing failed: {}", err);
                         } else {
