@@ -3,12 +3,6 @@ use std::fs::OpenOptions;
 use common::common::InjectOptions;
 use log::{error, info};
 use simplelog::{Config, LevelFilter, WriteLogger};
-use windows_sys::Win32::{
-    Foundation::HINSTANCE,
-    System::LibraryLoader::{
-        GetModuleHandleExA, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
-    },
-};
 
 forward_dll::forward_dll!(
     "version.dll",
@@ -33,7 +27,7 @@ forward_dll::forward_dll!(
 );
 
 #[no_mangle]
-pub extern "system" fn DllMain(inst: HINSTANCE, reason: u32, _: *const u8) -> u32 {
+pub extern "system" fn DllMain(inst: isize, reason: u32, _: *const u8) -> u32 {
     if reason == 1 {
         if let Err(err) = initialize(inst) {
             error!("{}", err);
@@ -45,21 +39,8 @@ pub extern "system" fn DllMain(inst: HINSTANCE, reason: u32, _: *const u8) -> u3
     1
 }
 
-pub fn initialize(inst: HINSTANCE) -> anyhow::Result<bool> {
-    let mut module_handle = 0;
-    let pin_success = unsafe {
-        GetModuleHandleExA(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-            inst as *const u8,
-            &mut module_handle,
-        )
-    } != 0;
-    if !pin_success {
-        return Err(anyhow::anyhow!(
-            "Failed to pin module handle: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
+pub fn initialize(inst: isize) -> anyhow::Result<bool> {
+    forward_dll::keep_module_in_memory(inst)?;
 
     let result_of_install_jumpers = unsafe { DLL_VERSION_FORWARDER.forward_all() };
 
