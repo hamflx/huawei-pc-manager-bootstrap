@@ -24,6 +24,13 @@ pub struct BootstrapApp {
     ipc_logger_address: Option<String>,
 }
 
+macro_rules! GET_VERSION {
+    () => {
+        include_str!(concat!(env!("OUT_DIR"), "/VERSION"))
+    };
+}
+pub const VERSION: &'static str = GET_VERSION!();
+
 const TIPS_BROWSE: &'static str = "点击“浏览”按钮选择华为电脑管家安装包（如：PCManager_Setup_12.0.1.26(C233D003).exe），然后点击“安装”。";
 const TIPS_AUTO_SCAN: &'static str =
     "自动扫描当前目录下的华为电脑管家安装包，找到安装包后，需要点击“安装”按钮进行安装。";
@@ -148,6 +155,13 @@ impl BootstrapApp {
             File::create(&self.log_file_path)?,
         )?;
         info!("Logger setup successfully");
+        info!("Installer version {}", VERSION);
+        let sys = sysinfo::System::new_all();
+        info!(
+            "OS: {} {}",
+            sys.name().unwrap_or_default(),
+            sys.os_version().unwrap_or_default()
+        );
 
         Ok(())
     }
@@ -319,7 +333,7 @@ impl Default for BootstrapApp {
 
 impl epi::App for BootstrapApp {
     fn name(&self) -> &str {
-        "华为电脑管家安装器"
+        concat!("华为电脑管家安装器 v", GET_VERSION!())
     }
 
     /// Called once before the first frame.

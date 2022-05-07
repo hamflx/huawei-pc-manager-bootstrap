@@ -13,7 +13,7 @@ use widestring::U16CString;
 use windows_sys::{
     core::{PCSTR, PCWSTR, PWSTR},
     Win32::{
-        Foundation::{GetLastError, BOOL, FARPROC, HANDLE},
+        Foundation::{GetLastError, BOOL, HANDLE},
         Security::SECURITY_ATTRIBUTES,
         System::{
             Diagnostics::Debug::{WriteProcessMemory, PROCESSOR_ARCHITECTURE_INTEL},
@@ -492,21 +492,12 @@ pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
         .map(|opts| opts.inject_sub_process)
         .unwrap_or(false);
     unsafe {
-        let fp_create_process: FnCreateProcessW = transmute(
-            get_proc_address("CreateProcessW", "kernel32.dll").ok_or_else(|| {
-                anyhow::anyhow!("GetProcAddress(CreateProcessW) failed: {}", GetLastError())
-            })?,
-        );
+        let fp_create_process: FnCreateProcessW =
+            transmute(get_proc_address("CreateProcessW", "kernel32.dll")?);
         info!("Got CreateProcessW: 0x{:x}", fp_create_process as usize);
 
-        let fp_get_system_firmware_table: FnGetSystemFirmwareTable = transmute(
-            get_proc_address("GetSystemFirmwareTable", "kernel32.dll").ok_or_else(|| {
-                anyhow::anyhow!(
-                    "GetProcAddress(GetSystemFirmwareTable) failed: {}",
-                    GetLastError()
-                )
-            })?,
-        );
+        let fp_get_system_firmware_table: FnGetSystemFirmwareTable =
+            transmute(get_proc_address("GetSystemFirmwareTable", "kernel32.dll")?);
         info!(
             "Got GetSystemFirmwareTable: 0x{:x}",
             fp_get_system_firmware_table as usize
@@ -559,16 +550,26 @@ pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
     Ok(())
 }
 
-unsafe fn get_proc_address(proc_name: &str, module_name: &str) -> FARPROC {
-    let module_name_cstr = CString::new(module_name).ok()?;
-    let proc_name_cstr = CString::new(proc_name).ok()?;
+unsafe fn get_proc_address(
+    proc_name: &str,
+    module_name: &str,
+) -> anyhow::Result<unsafe extern "system" fn() -> isize> {
+    let module_name_cstr = CString::new(module_name)?;
+    let proc_name_cstr = CString::new(proc_name)?;
     let h_inst = LoadLibraryA(module_name_cstr.as_ptr() as PCSTR);
 
     if h_inst == 0 {
-        return None;
+        return Err(anyhow::anyhow!(
+            "LoadLibraryA failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
 
-    GetProcAddress(h_inst, proc_name_cstr.as_ptr() as PCSTR)
+    Ok(
+        GetProcAddress(h_inst, proc_name_cstr.as_ptr() as PCSTR).ok_or_else(|| {
+            anyhow::anyhow!("GetProcAddress failed: {}", std::io::Error::last_os_error())
+        })?,
+    )
 }
 
 fn check_path_is_system(path: &str) -> bool {
@@ -609,8 +610,7 @@ unsafe fn inject_to_process(
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("No path content"))?;
     info!("Get enable_hook address from {}", lib_full_path);
-    let fp_enable_hook = get_proc_address("enable_hook", lib_full_path)
-        .ok_or_else(|| anyhow::anyhow!("No enable_hook function found"))?;
+    let fp_enable_hook = get_proc_address("enable_hook", lib_full_path)?;
 
     let library_name_with_null = format!("{}\0", LIBRARY_NAME);
     let core_module_handle = LoadLibraryA(library_name_with_null.as_ptr() as PCSTR);
@@ -628,8 +628,7 @@ unsafe fn inject_to_process(
         ));
     }
     let library_name_addr = write_process_memory(process_handle, &core_full_name_buffer)?;
-    let fp_load_library = get_proc_address("LoadLibraryA", "kernel32.dll")
-        .ok_or_else(|| anyhow::anyhow!("No LoadLibraryA function found"))?;
+    let fp_load_library = get_proc_address("LoadLibraryA", "kernel32.dll")?;
     let load_library_thread = CreateRemoteThread(
         process_handle,
         ptr::null(),
