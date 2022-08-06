@@ -89,7 +89,7 @@ fn initialize_logger() -> anyhow::Result<()> {
     let exe_path_buf = std::env::current_exe()?;
     let exe_name = exe_path_buf
         .file_stem()
-        .map_or(None, |s| s.to_str())
+        .and_then(|s| s.to_str())
         .unwrap_or("NoExeName");
     let pid = std::process::id();
     log_file_path.push(format!(

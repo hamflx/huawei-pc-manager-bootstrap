@@ -32,6 +32,8 @@ use windows_sys::{
     },
 };
 
+use crate::config::{get_firmware_config, Config};
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct InjectOptions {
     pub server_address: Option<String>,
@@ -152,7 +154,7 @@ fn get_and_cache_firmware_table() -> anyhow::Result<()> {
         HookGetSystemFirmwareTable.call(
             SMBIOS_FIRMWARE_TABLE_PROVIDER,
             SMBIOS_FIRMWARE_TABLE_ID,
-            0 as *mut c_void,
+            std::ptr::null_mut::<c_void>(),
             0,
         )
     };
@@ -182,15 +184,16 @@ fn get_and_cache_firmware_table() -> anyhow::Result<()> {
     CUSTOM_SMBIOS_BUFFER
         .lock()
         .map_err(|err| anyhow::anyhow!("Failed to lock custom smbios data buffer: {}", err))?
-        .replace(replace_smbios_manufacture(buffer));
+        .replace(replace_smbios_manufacturer(buffer));
 
     Ok(())
 }
 
-fn replace_smbios_manufacture(mut smbios_data: Vec<u8>) -> Vec<u8> {
+fn replace_smbios_manufacturer(mut smbios_data: Vec<u8>) -> Vec<u8> {
     unsafe {
         let raw_bios_ptr = smbios_data.as_mut_ptr() as *mut RawSMBIOSData;
-        let start_entry_ptr: *mut u8 = transmute(&(*raw_bios_ptr).SMBIOSTableData);
+        let start_entry_ptr: *mut u8 =
+            &(*raw_bios_ptr).SMBIOSTableData as *const [u8; 0] as *mut u8;
         let end_ptr = start_entry_ptr.add((*raw_bios_ptr).Length as usize);
         let mut header_ptr: *mut SMBIOSHEADER = transmute(start_entry_ptr as *mut u8);
         let mut smbios_entry_list: Vec<Vec<u8>> = vec![];
@@ -222,11 +225,7 @@ fn replace_smbios_manufacture(mut smbios_data: Vec<u8>) -> Vec<u8> {
                 .map(|entry| {
                     if entry.first() == Some(&1) {
                         let new_sys_entry = construct_own_sys_info(
-                            "HUAWEI",
-                            "HKD-WXX",
-                            "1.0",
-                            "5EKPM18320000397",
-                            "C233",
+                            &get_firmware_config().unwrap_or_else(|_| Config::default()),
                         );
                         dump_sys_info(&*(new_sys_entry.as_ptr() as *const SystemInfo));
                         new_sys_entry
@@ -330,16 +329,10 @@ fn dump_sys_info(sys_info: &SystemInfo) {
     );
 }
 
-fn construct_own_sys_info(
-    manufacture: &str,
-    product_name: &str,
-    version: &str,
-    sn: &str,
-    sku: &str,
-) -> Vec<u8> {
+fn construct_own_sys_info(config: &Config) -> Vec<u8> {
     let sys_info_data = format!(
         "{}\0{}\0{}\0{}\0{}\0\0",
-        manufacture, product_name, version, sn, sku
+        config.manufacturer, config.product_name, config.version, config.sn, config.sku
     );
 
     let mut sys_info = SystemInfo::default();
@@ -400,7 +393,7 @@ fn str_len(cstr: *const u8) -> usize {
         count += 1;
         current_ptr = unsafe { current_ptr.offset(1) };
     }
-    return count;
+    count
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -473,10 +466,8 @@ fn detour_create_process(
             } else {
                 info!("Skip system process.");
             }
-            if flags & CREATE_SUSPENDED == 0 {
-                if ResumeThread((*proc_info).hThread) == u32::MAX {
-                    warn!("ResumeThread error: {}", GetLastError());
-                }
+            if flags & CREATE_SUSPENDED == 0 && ResumeThread((*proc_info).hThread) == u32::MAX {
+                warn!("ResumeThread error: {}", GetLastError());
             }
         } else {
             warn!("CreateProcessW failed: {}", GetLastError());
@@ -565,11 +556,9 @@ unsafe fn get_proc_address(
         ));
     }
 
-    Ok(
-        GetProcAddress(h_inst, proc_name_cstr.as_ptr() as PCSTR).ok_or_else(|| {
-            anyhow::anyhow!("GetProcAddress failed: {}", std::io::Error::last_os_error())
-        })?,
-    )
+    GetProcAddress(h_inst, proc_name_cstr.as_ptr() as PCSTR).ok_or_else(|| {
+        anyhow::anyhow!("GetProcAddress failed: {}", std::io::Error::last_os_error())
+    })
 }
 
 fn check_path_is_system(path: &str) -> bool {
@@ -577,10 +566,10 @@ fn check_path_is_system(path: &str) -> bool {
     let size = unsafe { GetSystemDirectoryA(path_buffer.as_mut_ptr(), path_buffer.len() as u32) };
     if size > 0 {
         if let Ok(sys_dir) = String::from_utf8(path_buffer[..size as usize].to_vec()) {
-            let slash_sys_dir = sys_dir.replace("\\", "/");
-            let slash_path = path.replace("\\", "/");
+            let slash_sys_dir = sys_dir.replace('\\', "/");
+            let slash_path = path.replace('\\', "/");
             return slash_path.starts_with(&slash_sys_dir)
-                || (slash_path.chars().nth(0) == Some('"')
+                || (slash_path.chars().next() == Some('"')
                     && slash_path[1..].starts_with(&slash_sys_dir));
         }
     }
@@ -766,6 +755,5 @@ fn get_firmware_table_provider_signature(firmwaretableprovidersignature: u32) ->
     }
     .to_vec();
     sig_name_bytes.reverse();
-    let sig_name = String::from_utf8(sig_name_bytes).unwrap_or_else(|e| format!("Error({})", e));
-    sig_name
+    String::from_utf8(sig_name_bytes).unwrap_or_else(|e| format!("Error({})", e))
 }

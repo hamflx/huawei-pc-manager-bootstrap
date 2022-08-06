@@ -415,14 +415,16 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "bincode",
  "detour",
+ "directories",
  "lazy_static",
  "log",
  "serde",
+ "serde_json",
  "widestring",
  "windows-sys",
 ]
@@ -1230,7 +1232,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "huawei-pc-manager-bootstrap"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1248,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "huawei-pc-manager-bootstrap-core"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1297,6 +1299,12 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
 ]
+
+[[package]]
+name = "itoa"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c8af84674fe1f223a982c933a0ee1086ac4d4052aa0fb8060c12c6ad838e754"
 
 [[package]]
 name = "jni"
@@ -2053,6 +2061,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ryu"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4501abdff3ae82a1c1b477a17252eb69cee9e66eb915c1abaa4f44d873df9f09"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2091,6 +2105,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.83"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38dd04e3c8279e75b31ef29dbdceebfe5ad89f4d0937213c53f7d49d01b3d5a7"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
@@ -2231,9 +2256,8 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.23.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3fb8adaa82317f1e8a040281807f411803c9111303cfe129b4abb4a14b2c223"
+version = "0.25.1"
+source = "git+https://github.com/hamflx/sysinfo.git#b7091b36fd27841f9676d57bf377ef5b78ee7866"
 dependencies = [
  "cfg-if 1.0.0",
  "core-foundation-sys 0.8.3",
@@ -2405,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "version"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "chrono",

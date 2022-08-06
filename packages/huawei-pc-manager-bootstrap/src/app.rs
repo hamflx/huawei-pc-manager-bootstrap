@@ -7,6 +7,9 @@ use std::thread;
 
 use common::common::InjectOptions;
 use common::communication::InterProcessComServer;
+use common::config::{
+    get_cache_dir, get_config_dir, get_config_file_path, save_firmware_config, Config,
+};
 use eframe::egui::FontDefinitions;
 use eframe::epaint::{vec2, FontFamily};
 use eframe::{egui, epi};
@@ -29,13 +32,13 @@ macro_rules! GET_VERSION {
         include_str!(concat!(env!("OUT_DIR"), "/VERSION"))
     };
 }
-pub const VERSION: &'static str = GET_VERSION!();
+pub const VERSION: &str = GET_VERSION!();
 
-const TIPS_BROWSE: &'static str = "点击“浏览”按钮选择华为电脑管家安装包（如：PCManager_Setup_12.0.1.26(C233D003).exe），然后点击“安装”。";
-const TIPS_AUTO_SCAN: &'static str =
+const TIPS_BROWSE: & str = "点击“浏览”按钮选择华为电脑管家安装包（如：PCManager_Setup_12.0.1.26(C233D003).exe），然后点击“安装”。";
+const TIPS_AUTO_SCAN: &str =
     "自动扫描当前目录下的华为电脑管家安装包，找到安装包后，需要点击“安装”按钮进行安装。";
-const TIPS_AUTO_SCAN_FOUND: &'static str = "已找到安装包，点击“安装”按钮进行安装。";
-const TIPS_AUTO_SCAN_NOT_FOUND: &'static str = "未找到安装包！";
+const TIPS_AUTO_SCAN_FOUND: &str = "已找到安装包，点击“安装”按钮进行安装。";
+const TIPS_AUTO_SCAN_NOT_FOUND: &str = "未找到安装包！";
 
 impl BootstrapApp {
     pub fn set_executable_file_path(&mut self, path: String) {
@@ -73,61 +76,19 @@ impl BootstrapApp {
     }
 
     pub fn terminate_all_processes() -> anyhow::Result<()> {
-        let hw_process = [
-            r"WeLook.exe",
-            r"WebViewer.exe",
-            r"UninstallGuide.exe",
-            r"UltraSoundUI.exe",
-            r"ScreenSnipper.exe",
-            r"RepairPCManager.exe",
-            r"PerfWndMonHelper_x86.exe",
-            r"PerfWndMonHelper.exe",
-            r"PCManager.exe",
-            r"PairDeviceDes.exe",
-            r"OTAWndShow.exe",
-            r"OpenDir.exe",
-            r"OobeMain.exe",
-            r"OneKeyReset.exe",
-            r"OfficeFileMonitor.exe",
-            r"NPSPopwnd.exe",
-            r"MessageCenterUI.exe",
-            r"MBAMessageCenter.exe",
-            r"MBAInstallPre.exe",
-            r"MateBookService.exe",
-            r"HWVCR.exe",
-            r"HwTrayWndHelper.exe",
-            r"HwshareUI.exe",
-            r"HwSmartAudio.exe",
-            r"HwSettings.exe",
-            r"HwPhotoViewer.exe",
-            r"HwMirrorDragDropWnd.exe",
-            r"HwMirror.exe",
-            r"HwMdcUI.exe",
-            r"HwMdcCenter.exe",
-            r"HwFeaPromoUI.exe",
-            r"HwExScreen.exe",
-            r"HWAccountUI.exe",
-            r"hmdfsservice.exe",
-            r"HiboardDataReport.exe",
-            r"GetClipContent.exe",
-            r"FreeTouchUI.exe",
-            r"DumpReport.exe",
-            r"DragFileProgress.exe",
-            r"distributedfileservice.exe",
-            r"DFSSearchUI.exe",
-            r"DFSSearchService.exe",
-            r"AdvancedService.exe",
-        ];
+        let pc_manager_dir = Self::get_pc_manager_dir()?
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("未找到华为电脑管家安装目录。"))?
+            .to_ascii_lowercase();
+        info!("Pc Manager installed dir: {}", pc_manager_dir);
         let mut system = sysinfo::System::new();
         system.refresh_processes();
         for (_pid, process) in system.processes() {
-            let process_name = process.name();
-            let is_hw_process = hw_process
-                .iter()
-                .any(|name| name.eq_ignore_ascii_case(process_name));
-            if is_hw_process {
-                info!("Found hw process: {}", process_name);
-                process.kill();
+            if let Some(exe) = process.exe().to_str() {
+                if exe.to_ascii_lowercase().starts_with(&pc_manager_dir) {
+                    info!("Found hw process: {}", exe);
+                    process.kill();
+                }
             }
         }
         Ok(())
@@ -254,11 +215,23 @@ impl BootstrapApp {
         let target_version_dll_path = pc_manager_dir.join("version.dll");
         std::fs::write(&target_version_dll_path, patch_file_bytes)?;
 
+        let mut config_file_path = get_config_dir()?;
+        config_file_path.push("config.json");
+        if !config_file_path.exists() {
+            save_firmware_config(&Config::default())?;
+        }
+
         Ok(())
     }
 
     fn open_log_file(&self) {
         let _ = Command::new("notepad").arg(&self.log_file_path).spawn();
+    }
+
+    fn open_config_file(&self) -> anyhow::Result<()> {
+        let config_file_path = get_config_file_path()?;
+        let _ = Command::new("notepad").arg(config_file_path).spawn();
+        Ok(())
     }
 
     fn open_log_file_dir(&self) -> anyhow::Result<()> {
@@ -307,15 +280,9 @@ impl BootstrapApp {
 
 impl Default for BootstrapApp {
     fn default() -> Self {
-        let project_dir =
-            directories::ProjectDirs::from("cn", "hamflx", "huawei_pc_manager_bootstrap")
-                .ok_or_else(|| anyhow::anyhow!("No project dir"))
-                .unwrap();
-        let cache_dir = project_dir.cache_dir();
-        std::fs::create_dir_all(cache_dir).unwrap();
-
-        let mut log_file_path = cache_dir.to_path_buf();
         let now = chrono::Local::now();
+
+        let mut log_file_path = get_cache_dir().unwrap();
         log_file_path.push(format!("app-{}.log", now.format("%Y%m%d%H%M%S")));
         let log_file_path = log_file_path.to_str().unwrap().to_owned();
         let status_text = String::from(TIPS_BROWSE);
@@ -448,6 +415,13 @@ impl epi::App for BootstrapApp {
                         } else {
                             self.status_text = "执行成功。".to_owned();
                             info!("Huawei process terminated successfully");
+                        }
+                    }
+
+                    if ui.button("打开配置").clicked() {
+                        if let Err(err) = self.open_config_file() {
+                            self.status_text = format!("Opening config file failed: {}", err);
+                            warn!("Opening config file failed: {}", err);
                         }
                     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "huawei-pc-manager-bootstrap"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 
 [dependencies]
@@ -25,5 +25,5 @@ windows-sys = { version = "0.35.0", features = [
 log = "0.4.14"
 simplelog = "0.11.2"
 directories = "4.0.1"
-sysinfo = "0.23.9"
+sysinfo = { git = "https://github.com/hamflx/sysinfo.git" }
 clap = { version = "3.1.12", features = ["derive"] }
