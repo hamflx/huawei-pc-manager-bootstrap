@@ -1,4 +1,3 @@
-use std::ffi::CStr;
 use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
@@ -17,7 +16,8 @@ use log::{error, info, warn, LevelFilter};
 use rfd::FileDialog;
 use simplelog::{ConfigBuilder, WriteLogger};
 use sysinfo::{ProcessExt, SystemExt};
-use windows_sys::Win32::UI::Shell::{SHGetSpecialFolderPathA, CSIDL_PROGRAM_FILES};
+use widestring::WideCStr;
+use windows_sys::Win32::UI::Shell::{SHGetSpecialFolderPathW, CSIDL_PROGRAM_FILES};
 
 pub struct BootstrapApp {
     log_file_path: String,
@@ -251,7 +251,7 @@ impl BootstrapApp {
     fn get_pc_manager_dir() -> anyhow::Result<PathBuf> {
         let mut path_buffer = [0; 4096];
         let get_dir_success = unsafe {
-            SHGetSpecialFolderPathA(
+            SHGetSpecialFolderPathW(
                 0,
                 path_buffer.as_mut_ptr(),
                 CSIDL_PROGRAM_FILES.try_into().unwrap(),
@@ -266,12 +266,12 @@ impl BootstrapApp {
         }
 
         let program_files_dir =
-            unsafe { CStr::from_ptr(path_buffer.as_ptr() as *const i8).to_str()? };
+            unsafe { WideCStr::from_ptr_str(path_buffer.as_ptr()).to_string()? };
         let x86_suffix = " (x86)";
         let program_files_dir = if program_files_dir.ends_with(x86_suffix) {
             &program_files_dir[..program_files_dir.len() - x86_suffix.len()]
         } else {
-            program_files_dir
+            &program_files_dir
         };
 
         Ok([program_files_dir, "Huawei", "PCManager"].iter().collect())

@@ -4,23 +4,23 @@ use serde::{Deserialize, Serialize};
 use std::{
     ffi::{c_void, CStr, CString},
     intrinsics::transmute,
-    mem::MaybeUninit,
+    mem::{size_of_val, MaybeUninit},
     ptr,
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::Mutex,
 };
-use widestring::U16CString;
+use widestring::{U16CString, WideCString};
 use windows_sys::{
-    core::{PCSTR, PCWSTR, PWSTR},
+    core::{PCWSTR, PWSTR},
     Win32::{
         Foundation::{GetLastError, BOOL, HANDLE},
         Security::SECURITY_ATTRIBUTES,
         System::{
             Diagnostics::Debug::{WriteProcessMemory, PROCESSOR_ARCHITECTURE_INTEL},
-            LibraryLoader::{GetModuleFileNameA, GetProcAddress, LoadLibraryA},
+            LibraryLoader::{GetModuleFileNameW, GetProcAddress, LoadLibraryW},
             Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE},
             SystemInformation::{
-                GetNativeSystemInfo, GetSystemDirectoryA, FIRMWARE_TABLE_ID,
+                GetNativeSystemInfo, GetSystemDirectoryW, FIRMWARE_TABLE_ID,
                 FIRMWARE_TABLE_PROVIDER, SYSTEM_INFO,
             },
             Threading::{
@@ -452,11 +452,7 @@ fn detour_create_process(
             let should_inject = opts
                 .as_ref()
                 .map(|opts| {
-                    opts.includes_system_process
-                        || (!app_name_string.trim().is_empty()
-                            && !check_path_is_system(app_name_string.as_str())
-                            || !cmd_line_string.trim().is_empty()
-                                && !check_path_is_system(cmd_line_string.as_str()))
+                    should_inject_process(opts, app_name_string.as_str(), cmd_line_string.as_str())
                 })
                 .unwrap_or(true);
             if should_inject {
@@ -541,33 +537,45 @@ pub fn enable_hook(opts: Option<InjectOptions>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn should_inject_process(opts: &InjectOptions, app_name: &str, cmd_line: &str) -> bool {
+    opts.includes_system_process
+        || (if !app_name.trim().is_empty() {
+            !check_path_is_system(app_name)
+        } else {
+            !check_path_is_system(cmd_line)
+        })
+}
+
 unsafe fn get_proc_address(
     proc_name: &str,
     module_name: &str,
 ) -> anyhow::Result<unsafe extern "system" fn() -> isize> {
-    let module_name_cstr = CString::new(module_name)?;
-    let proc_name_cstr = CString::new(proc_name)?;
-    let h_inst = LoadLibraryA(module_name_cstr.as_ptr() as PCSTR);
-
+    let module_name_cstr = WideCString::from_str(module_name)?;
+    let h_inst = LoadLibraryW(module_name_cstr.as_ptr());
     if h_inst == 0 {
         return Err(anyhow::anyhow!(
-            "LoadLibraryA failed: {}",
+            "LoadLibraryW failed: {}",
             std::io::Error::last_os_error()
         ));
     }
 
-    GetProcAddress(h_inst, proc_name_cstr.as_ptr() as PCSTR).ok_or_else(|| {
+    let proc_name_cstr = CString::new(proc_name)?;
+    GetProcAddress(h_inst, proc_name_cstr.as_ptr() as _).ok_or_else(|| {
         anyhow::anyhow!("GetProcAddress failed: {}", std::io::Error::last_os_error())
     })
 }
 
 fn check_path_is_system(path: &str) -> bool {
     let mut path_buffer = [0; 4096];
-    let size = unsafe { GetSystemDirectoryA(path_buffer.as_mut_ptr(), path_buffer.len() as u32) };
+    let size = unsafe { GetSystemDirectoryW(path_buffer.as_mut_ptr(), path_buffer.len() as _) };
     if size > 0 {
-        if let Ok(sys_dir) = String::from_utf8(path_buffer[..size as usize].to_vec()) {
-            let slash_sys_dir = sys_dir.replace('\\', "/");
-            let slash_path = path.replace('\\', "/");
+        let sys_dir = unsafe { WideCString::from_ptr(path_buffer.as_ptr(), size as _) }
+            .ok()
+            .and_then(|s| s.to_string().ok());
+        info!("System directory: {:?}", sys_dir);
+        if let Some(sys_dir) = sys_dir {
+            let slash_sys_dir = sys_dir.replace('\\', "/").to_ascii_lowercase();
+            let slash_path = path.replace('\\', "/").to_ascii_lowercase();
             return slash_path.starts_with(&slash_sys_dir)
                 || (slash_path.chars().next() == Some('"')
                     && slash_path[1..].starts_with(&slash_sys_dir));
@@ -601,11 +609,11 @@ unsafe fn inject_to_process(
     info!("Get enable_hook address from {}", lib_full_path);
     let fp_enable_hook = get_proc_address("enable_hook", lib_full_path)?;
 
-    let library_name_with_null = format!("{}\0", LIBRARY_NAME);
-    let core_module_handle = LoadLibraryA(library_name_with_null.as_ptr() as PCSTR);
-    let mut core_full_name_buffer = [0u8; 4096];
+    let library_name_with_null = WideCString::from_str(LIBRARY_NAME)?;
+    let core_module_handle = LoadLibraryW(library_name_with_null.as_ptr() as _);
+    let mut core_full_name_buffer = [0; 4096];
     if core_module_handle == 0
-        || GetModuleFileNameA(
+        || GetModuleFileNameW(
             core_module_handle,
             core_full_name_buffer.as_mut_ptr(),
             core_full_name_buffer.len() as u32,
@@ -616,8 +624,14 @@ unsafe fn inject_to_process(
             GetLastError()
         ));
     }
-    let library_name_addr = write_process_memory(process_handle, &core_full_name_buffer)?;
-    let fp_load_library = get_proc_address("LoadLibraryA", "kernel32.dll")?;
+    let library_name_addr = write_process_memory(
+        process_handle,
+        std::slice::from_raw_parts(
+            core_full_name_buffer.as_ptr() as _,
+            size_of_val(&core_full_name_buffer),
+        ),
+    )?;
+    let fp_load_library = get_proc_address("LoadLibraryW", "kernel32.dll")?;
     let load_library_thread = CreateRemoteThread(
         process_handle,
         ptr::null(),
@@ -634,7 +648,7 @@ unsafe fn inject_to_process(
         ));
     }
     info!(
-        "Created LoadLibraryA thread with id: {}",
+        "Created LoadLibraryW thread with id: {}",
         GetThreadId(load_library_thread)
     );
     let wait_result = WaitForSingleObject(load_library_thread, 0xFFFFFFFF);
@@ -648,7 +662,7 @@ unsafe fn inject_to_process(
     if GetExitCodeThread(load_library_thread, &mut module_handle as *mut u32) != 0
         && module_handle == 0
     {
-        return Err(anyhow::anyhow!("Remote LoadLibraryA failed"));
+        return Err(anyhow::anyhow!("Remote LoadLibraryW failed"));
     }
 
     let enable_hook_params = if let Some(opts) = opts {

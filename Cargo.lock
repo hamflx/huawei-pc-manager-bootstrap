@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "bincode",
@@ -425,7 +425,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
- "widestring",
+ "widestring 0.5.1",
  "windows-sys",
 ]
 
@@ -1232,7 +1232,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "huawei-pc-manager-bootstrap"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1245,12 +1245,13 @@ dependencies = [
  "rfd",
  "simplelog",
  "sysinfo",
+ "widestring 1.0.2",
  "windows-sys",
 ]
 
 [[package]]
 name = "huawei-pc-manager-bootstrap-core"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "bincode",
@@ -2429,7 +2430,7 @@ dependencies = [
 
 [[package]]
 name = "version"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2650,7 +2651,7 @@ dependencies = [
  "ndk-glue 0.6.1",
  "url",
  "web-sys",
- "widestring",
+ "widestring 0.5.1",
  "winapi 0.3.9",
 ]
 
@@ -2668,6 +2669,12 @@ name = "widestring"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17882f045410753661207383517a6f62ec3dbeb6a4ed2acce01f0728238d1983"
+
+[[package]]
+name = "widestring"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "653f141f39ec16bba3c5abe400a0c60da7468261cc2cbf36805022876bc721a8"
 
 [[package]]
 name = "winapi"

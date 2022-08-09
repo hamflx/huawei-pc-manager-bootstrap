@@ -3,10 +3,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] //Hide console window in release builds on Windows, this blocks stdout.
 #![feature(iter_intersperse)]
 
-use std::ffi::CString;
-
 use clap::Parser;
-use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteA};
+use widestring::WideCString;
+use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
 
 mod app;
 
@@ -35,8 +34,11 @@ fn main() {
             println!("No administrator");
             return;
         }
-        let executable_file_null_ter =
-            format!("{}\0", std::env::current_exe().unwrap().to_str().unwrap());
+        let executable_file_null_ter = WideCString::from_str(format!(
+            "{}\0",
+            std::env::current_exe().unwrap().to_str().unwrap()
+        ))
+        .unwrap();
 
         let mut cmd_line: String = std::env::args()
             .skip(1)
@@ -50,14 +52,15 @@ fn main() {
             .intersperse(" ".to_string())
             .collect();
         cmd_line.push_str(" --ensure-admin");
-        let cmd_line = CString::new(cmd_line).unwrap();
+
+        let cmd_line = WideCString::from_str(cmd_line).unwrap();
         unsafe {
-            ShellExecuteA(
+            ShellExecuteW(
                 0,
-                "runas\0".as_ptr(),
+                WideCString::from_str("runas\0").unwrap().as_ptr(),
                 executable_file_null_ter.as_ptr(),
-                cmd_line.as_ptr() as *const u8,
-                0 as *const u8,
+                cmd_line.as_ptr(),
+                0 as _,
                 5,
             )
         };
