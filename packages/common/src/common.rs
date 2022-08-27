@@ -1,5 +1,5 @@
 use detour::static_detour;
-use injectors::{inject_to_process, InjectOptions};
+use injectors::{options::InjectOptions, process::ProcessHandle};
 use log::{error, info, warn};
 use std::{
     ffi::{c_void, CStr, CString},
@@ -434,7 +434,8 @@ fn detour_create_process(
                 })
                 .unwrap_or(true);
             if should_inject {
-                if let Err(err) = inject_to_process((*proc_info).hProcess, opts, LIBRARY_NAME) {
+                let process = ProcessHandle::from_handle((*proc_info).hProcess);
+                if let Err(err) = process.inject_to_process(opts, LIBRARY_NAME) {
                     warn!("inject_to_process error: {}", err);
                 }
             } else {

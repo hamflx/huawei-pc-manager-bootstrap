@@ -24,4 +24,4 @@ serde = { version = "1.0", features = ["derive"] }
 lazy_static = "1.4.0"
 directories = "4.0.1"
 serde_json = "1.0.83"
-injectors = "0.1.0"
+injectors = "0.1.1"

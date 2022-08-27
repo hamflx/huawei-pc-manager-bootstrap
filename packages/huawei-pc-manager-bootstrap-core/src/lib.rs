@@ -2,7 +2,7 @@ use std::fs::File;
 use std::slice::from_raw_parts;
 
 use common::communication::InterProcessComClient;
-use injectors::{InjectOptions, INJECT_OPTIONS_WRAPPER};
+use injectors::options::{InjectOptions, INJECT_OPTIONS_WRAPPER};
 use log::{error, info, LevelFilter};
 use simplelog::{Config, WriteLogger};
 

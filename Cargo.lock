@@ -1294,9 +1294,9 @@ dependencies = [
 
 [[package]]
 name = "injectors"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8393b64354b218c8da14e7edff4f846b364a1528ca2d17b79eee07ea07183c40"
+checksum = "26a5fc7a3c0ea064112796e3cb0b929ede6ce3cf89cf1cc74f100f6c039c8523"
 dependencies = [
  "bincode",
  "log",

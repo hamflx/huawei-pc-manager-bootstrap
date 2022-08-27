@@ -11,7 +11,7 @@ use common::config::{
 use eframe::egui::FontDefinitions;
 use eframe::epaint::{vec2, FontFamily};
 use eframe::{egui, epi};
-use injectors::InjectOptions;
+use injectors::options::InjectOptions;
 use log::{error, info, warn, LevelFilter};
 use rfd::FileDialog;
 use simplelog::{ConfigBuilder, WriteLogger};
