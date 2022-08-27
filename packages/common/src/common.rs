@@ -1,11 +1,9 @@
 use detour::static_detour;
+use injectors::{inject_to_process, InjectOptions};
 use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
 use std::{
     ffi::{c_void, CStr, CString},
     intrinsics::transmute,
-    mem::{size_of_val, MaybeUninit},
-    ptr,
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::Mutex,
 };
@@ -13,40 +11,20 @@ use widestring::{U16CString, WideCString};
 use windows_sys::{
     core::{PCWSTR, PWSTR},
     Win32::{
-        Foundation::{GetLastError, BOOL, HANDLE},
+        Foundation::{GetLastError, BOOL},
         Security::SECURITY_ATTRIBUTES,
         System::{
-            Diagnostics::Debug::{WriteProcessMemory, PROCESSOR_ARCHITECTURE_INTEL},
-            LibraryLoader::{GetModuleFileNameW, GetProcAddress, LoadLibraryW},
-            Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE},
-            SystemInformation::{
-                GetNativeSystemInfo, GetSystemDirectoryW, FIRMWARE_TABLE_ID,
-                FIRMWARE_TABLE_PROVIDER, SYSTEM_INFO,
-            },
+            LibraryLoader::{GetProcAddress, LoadLibraryW},
+            SystemInformation::{GetSystemDirectoryW, FIRMWARE_TABLE_ID, FIRMWARE_TABLE_PROVIDER},
             Threading::{
-                CreateRemoteThread, GetCurrentProcess, GetExitCodeThread, GetThreadId,
-                IsWow64Process, ResumeThread, TerminateProcess, WaitForSingleObject,
-                CREATE_SUSPENDED, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOW,
+                ResumeThread, TerminateProcess, CREATE_SUSPENDED, PROCESS_CREATION_FLAGS,
+                PROCESS_INFORMATION, STARTUPINFOW,
             },
         },
     },
 };
 
 use crate::config::{get_firmware_config, Config};
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct InjectOptions {
-    pub server_address: Option<String>,
-    pub inject_sub_process: bool,
-    pub includes_system_process: bool,
-}
-
-#[repr(C)]
-#[derive(Serialize, Deserialize)]
-pub struct INJECT_OPTIONS_WRAPPER {
-    pub len: usize,
-    pub ptr: u64,
-}
 
 #[repr(C)]
 #[derive(Clone)]
@@ -456,7 +434,7 @@ fn detour_create_process(
                 })
                 .unwrap_or(true);
             if should_inject {
-                if let Err(err) = inject_to_process((*proc_info).hProcess, opts) {
+                if let Err(err) = inject_to_process((*proc_info).hProcess, opts, LIBRARY_NAME) {
                     warn!("inject_to_process error: {}", err);
                 }
             } else {
@@ -582,182 +560,6 @@ fn check_path_is_system(path: &str) -> bool {
         }
     }
     false
-}
-
-unsafe fn inject_to_process(
-    process_handle: HANDLE,
-    opts: &Option<InjectOptions>,
-) -> anyhow::Result<()> {
-    let is_target_x86 = is_process_x86(process_handle)?;
-    let is_self_x86 = is_process_x86(GetCurrentProcess())?;
-    if is_target_x86 != is_self_x86 {
-        return Err(anyhow::anyhow!(
-            "Process architecture mismatch, expect {} got {}",
-            if is_self_x86 { "x86" } else { "x64" },
-            if is_target_x86 { "x86" } else { "x64" }
-        ));
-    }
-
-    let mut lib_full_path = std::env::current_exe()?
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("No path content"))?
-        .to_path_buf();
-    lib_full_path.push(LIBRARY_NAME);
-    let lib_full_path = lib_full_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("No path content"))?;
-    info!("Get enable_hook address from {}", lib_full_path);
-    let fp_enable_hook = get_proc_address("enable_hook", lib_full_path)?;
-
-    let library_name_with_null = WideCString::from_str(LIBRARY_NAME)?;
-    let core_module_handle = LoadLibraryW(library_name_with_null.as_ptr() as _);
-    let mut core_full_name_buffer = [0; 4096];
-    if core_module_handle == 0
-        || GetModuleFileNameW(
-            core_module_handle,
-            core_full_name_buffer.as_mut_ptr(),
-            core_full_name_buffer.len() as u32,
-        ) == 0
-    {
-        return Err(anyhow::anyhow!(
-            "GetModuleFileNameA failed: {}",
-            GetLastError()
-        ));
-    }
-    let library_name_addr = write_process_memory(
-        process_handle,
-        std::slice::from_raw_parts(
-            core_full_name_buffer.as_ptr() as _,
-            size_of_val(&core_full_name_buffer),
-        ),
-    )?;
-    let fp_load_library = get_proc_address("LoadLibraryW", "kernel32.dll")?;
-    let load_library_thread = CreateRemoteThread(
-        process_handle,
-        ptr::null(),
-        0,
-        Some(transmute(fp_load_library)),
-        library_name_addr,
-        0,
-        ptr::null_mut(),
-    );
-    if load_library_thread == 0 {
-        return Err(anyhow::anyhow!(
-            "CreateRemoteThread failed: {}",
-            GetLastError()
-        ));
-    }
-    info!(
-        "Created LoadLibraryW thread with id: {}",
-        GetThreadId(load_library_thread)
-    );
-    let wait_result = WaitForSingleObject(load_library_thread, 0xFFFFFFFF);
-    if wait_result != 0 {
-        return Err(anyhow::anyhow!(
-            "WaitForSingleObject failed: {}",
-            wait_result
-        ));
-    }
-    let mut module_handle: u32 = 0;
-    if GetExitCodeThread(load_library_thread, &mut module_handle as *mut u32) != 0
-        && module_handle == 0
-    {
-        return Err(anyhow::anyhow!("Remote LoadLibraryW failed"));
-    }
-
-    let enable_hook_params = if let Some(opts) = opts {
-        let opts_bytes = bincode::serialize(opts)?;
-        let opts_ptr = write_process_memory(process_handle, opts_bytes.as_slice())?;
-        info!("Write options to address {:?}", opts_ptr);
-        let opts_wrapper = INJECT_OPTIONS_WRAPPER {
-            len: opts_bytes.len(),
-            ptr: opts_ptr as u64,
-        };
-        let opts_wrapper_bytes = bincode::serialize(&opts_wrapper)?;
-        let opts_wrapper_ptr = write_process_memory(process_handle, opts_wrapper_bytes.as_slice())?;
-        info!("Write options wrapper to address {:?}", opts_wrapper_ptr);
-        opts_wrapper_ptr
-    } else {
-        ptr::null()
-    };
-    let thread_handle = CreateRemoteThread(
-        process_handle,
-        ptr::null(),
-        0,
-        Some(transmute(fp_enable_hook)),
-        enable_hook_params,
-        0,
-        ptr::null_mut(),
-    );
-    if thread_handle == 0 {
-        return Err(anyhow::anyhow!(
-            "CreateRemoteThread failed: {}",
-            GetLastError()
-        ));
-    }
-    info!(
-        "Created enable_hook thread with id: {}",
-        GetThreadId(thread_handle)
-    );
-    let wait_result = WaitForSingleObject(thread_handle, 0xFFFFFFFF);
-    if wait_result != 0 {
-        return Err(anyhow::anyhow!(
-            "WaitForSingleObject failed: {}",
-            wait_result
-        ));
-    }
-
-    Ok(())
-}
-
-fn is_process_x86(process_handle: HANDLE) -> anyhow::Result<bool> {
-    let sys_info = unsafe {
-        let mut sys_info = MaybeUninit::<SYSTEM_INFO>::uninit();
-        GetNativeSystemInfo(sys_info.as_mut_ptr());
-        sys_info.assume_init()
-    };
-    let processor_arch = unsafe { sys_info.Anonymous.Anonymous.wProcessorArchitecture };
-    Ok(processor_arch == PROCESSOR_ARCHITECTURE_INTEL || is_wow64_process(process_handle)?)
-}
-
-fn is_wow64_process(process_handle: HANDLE) -> anyhow::Result<bool> {
-    let mut is_wow64 = 0;
-    unsafe {
-        if IsWow64Process(process_handle, &mut is_wow64) == 0 {
-            return Err(anyhow::anyhow!("IsWow64Process failed: {}", GetLastError()));
-        }
-    }
-    Ok(is_wow64 != 0)
-}
-
-unsafe fn write_process_memory(
-    process_handle: HANDLE,
-    content: &[u8],
-) -> anyhow::Result<*mut c_void> {
-    let target_address = VirtualAllocEx(
-        process_handle,
-        ptr::null(),
-        content.len(),
-        MEM_COMMIT | MEM_RESERVE,
-        PAGE_EXECUTE_READWRITE,
-    );
-    if target_address.is_null() {
-        return Err(anyhow::anyhow!("VirtualAllocEx failed: {}", GetLastError()));
-    }
-    let success = WriteProcessMemory(
-        process_handle,
-        target_address,
-        content.as_ptr() as *const c_void,
-        content.len(),
-        ptr::null_mut(),
-    );
-    if success == 0 {
-        return Err(anyhow::anyhow!(
-            "WriteProcessMemory failed: {}",
-            GetLastError()
-        ));
-    }
-    Ok(target_address)
 }
 
 fn get_firmware_table_provider_signature(firmwaretableprovidersignature: u32) -> String {

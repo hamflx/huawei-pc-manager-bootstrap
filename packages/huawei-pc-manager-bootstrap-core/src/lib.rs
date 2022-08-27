@@ -1,10 +1,8 @@
-#![feature(ptr_const_cast)]
-
 use std::fs::File;
 use std::slice::from_raw_parts;
 
-use common::common::{InjectOptions, INJECT_OPTIONS_WRAPPER};
 use common::communication::InterProcessComClient;
+use injectors::{InjectOptions, INJECT_OPTIONS_WRAPPER};
 use log::{error, info, LevelFilter};
 use simplelog::{Config, WriteLogger};
 

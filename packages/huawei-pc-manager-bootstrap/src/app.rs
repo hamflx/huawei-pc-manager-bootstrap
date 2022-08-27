@@ -4,7 +4,6 @@ use std::process::Command;
 use std::str::FromStr;
 use std::thread;
 
-use common::common::InjectOptions;
 use common::communication::InterProcessComServer;
 use common::config::{
     get_cache_dir, get_config_dir, get_config_file_path, save_firmware_config, Config,
@@ -12,6 +11,7 @@ use common::config::{
 use eframe::egui::FontDefinitions;
 use eframe::epaint::{vec2, FontFamily};
 use eframe::{egui, epi};
+use injectors::InjectOptions;
 use log::{error, info, warn, LevelFilter};
 use rfd::FileDialog;
 use simplelog::{ConfigBuilder, WriteLogger};

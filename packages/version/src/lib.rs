@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 
-use common::common::InjectOptions;
+use injectors::InjectOptions;
 use log::{error, info};
 use simplelog::{Config, LevelFilter, WriteLogger};
 
