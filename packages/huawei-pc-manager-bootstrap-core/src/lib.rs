@@ -15,21 +15,14 @@ pub unsafe extern "system" fn enable_hook(opts_ptr: *const INJECT_OPTIONS_WRAPPE
         bincode::deserialize(from_raw_parts(ptr, (*opts_ptr).len)).ok()
     };
 
-    if let Some(opts) = &opts {
-        if let Some(address) = &opts.server_address {
-            if let Ok(client) = InterProcessComClient::connect(address) {
-                log::set_max_level(LevelFilter::Info);
-                log::set_logger(Box::leak(Box::new(client))).ok()
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-    .or_else(|| initialize_file_logger().ok());
+    opts.as_ref()
+        .and_then(|opts| opts.server_address.as_ref())
+        .and_then(|addr| InterProcessComClient::connect(addr).ok())
+        .map(|client| {
+            log::set_max_level(LevelFilter::Info);
+            log::set_logger(Box::leak(Box::new(client))).ok();
+        })
+        .or_else(|| initialize_file_logger().ok());
 
     info!("Enabling hook ...");
     if let Err(err) = common::common::enable_hook(opts) {

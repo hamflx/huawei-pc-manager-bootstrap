@@ -556,8 +556,7 @@ fn check_path_is_system(path: &str) -> bool {
             let slash_sys_dir = sys_dir.replace('\\', "/").to_ascii_lowercase();
             let slash_path = path.replace('\\', "/").to_ascii_lowercase();
             return slash_path.starts_with(&slash_sys_dir)
-                || (slash_path.chars().next() == Some('"')
-                    && slash_path[1..].starts_with(&slash_sys_dir));
+                || (slash_path.starts_with('"') && slash_path[1..].starts_with(&slash_sys_dir));
         }
     }
     false
