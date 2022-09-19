@@ -286,7 +286,7 @@ impl Default for BootstrapApp {
         log_file_path.push(format!("app-{}.log", now.format("%Y%m%d%H%M%S")));
         let log_file_path = log_file_path.to_str().unwrap().to_owned();
         let status_text = String::from(TIPS_BROWSE);
-        let log_text = format!("这里是日志区域，但是我跟编译器搏斗了半天，仍然是没能把日志输出到这里，只能把日志输出到文件：\n{}", log_file_path);
+        let log_text = format!("此处待添加日志的实时显示。\n{}", log_file_path);
 
         Self {
             log_file_path,
