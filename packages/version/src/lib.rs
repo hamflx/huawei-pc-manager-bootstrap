@@ -1,30 +1,15 @@
 use std::fs::OpenOptions;
 
+use forward_dll::ForwardModule;
 use injectors::options::InjectOptions;
 use log::{error, info};
 use simplelog::{Config, LevelFilter, WriteLogger};
 
-forward_dll::forward_dll!(
-    "C:\\Windows\\system32\\version.dll",
-    DLL_VERSION_FORWARDER,
-    GetFileVersionInfoA
-    GetFileVersionInfoByHandle
-    GetFileVersionInfoExA
-    GetFileVersionInfoExW
-    GetFileVersionInfoSizeA
-    GetFileVersionInfoSizeExA
-    GetFileVersionInfoSizeExW
-    GetFileVersionInfoSizeW
-    GetFileVersionInfoW
-    VerFindFileA
-    VerFindFileW
-    VerInstallFileA
-    VerInstallFileW
-    VerLanguageNameA
-    VerLanguageNameW
-    VerQueryValueA
-    VerQueryValueW
-);
+#[derive(ForwardModule)]
+#[forward("C:\\Windows\\system32\\version.dll")]
+pub struct VersionModule;
+
+const VERSION_LIB: VersionModule = VersionModule;
 
 #[no_mangle]
 pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
@@ -40,9 +25,7 @@ pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
 }
 
 pub fn initialize() -> anyhow::Result<bool> {
-    forward_dll::load_library("C:\\Windows\\system32\\version.dll")?;
-
-    let result_of_install_jumpers = unsafe { DLL_VERSION_FORWARDER.forward_all() };
+    let result_of_install_jumpers = VERSION_LIB.init();
 
     if let Err(err) = initialize_logger() {
         eprintln!("Failed to initialize logger: {}", err);

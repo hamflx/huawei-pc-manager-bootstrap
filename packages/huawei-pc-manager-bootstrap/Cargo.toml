@@ -29,3 +29,4 @@ sysinfo = "0.26.2"
 clap = { version = "3.1.12", features = ["derive"] }
 widestring = "1.0.2"
 injectors = "0.1.1"
+vc-ltl = "5.0.5"
