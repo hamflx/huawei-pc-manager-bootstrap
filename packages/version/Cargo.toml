@@ -13,6 +13,6 @@ common = { path = "../common" }
 simplelog = "0.11.2"
 directories = "4.0.1"
 log = "0.4.14"
-forward-dll = "0.1.6"
+forward-dll = "0.1.8"
 injectors = "0.1.1"
 vc-ltl = "5.0.5"

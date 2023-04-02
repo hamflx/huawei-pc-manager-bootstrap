@@ -6,7 +6,7 @@ use log::{error, info};
 use simplelog::{Config, LevelFilter, WriteLogger};
 
 #[derive(ForwardModule)]
-#[forward("C:\\Windows\\system32\\version.dll")]
+#[forward(target = "C:\\Windows\\system32\\version.dll")]
 pub struct VersionModule;
 
 const VERSION_LIB: VersionModule = VersionModule;
