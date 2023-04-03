@@ -1,15 +1,8 @@
 use std::fs::OpenOptions;
 
-use forward_dll::ForwardModule;
 use injectors::options::InjectOptions;
 use log::{error, info};
 use simplelog::{Config, LevelFilter, WriteLogger};
-
-#[derive(ForwardModule)]
-#[forward(target = "C:\\Windows\\system32\\version.dll")]
-pub struct VersionModule;
-
-const VERSION_LIB: VersionModule = VersionModule;
 
 #[no_mangle]
 pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
@@ -25,24 +18,8 @@ pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
 }
 
 pub fn initialize() -> anyhow::Result<bool> {
-    let result_of_install_jumpers = VERSION_LIB.init();
-
     if let Err(err) = initialize_logger() {
         eprintln!("Failed to initialize logger: {}", err);
-    }
-
-    if let Err(err) = &result_of_install_jumpers {
-        error!("{}", err);
-    } else {
-        info!("All jumpers installed");
-        // unsafe {
-        //     windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxA(
-        //         0,
-        //         "Success\0".as_ptr(),
-        //         "Jump\0".as_ptr(),
-        //         0,
-        //     )
-        // };
     }
 
     match common::common::enable_hook(Some(InjectOptions {
@@ -58,7 +35,7 @@ pub fn initialize() -> anyhow::Result<bool> {
         }
     }
 
-    Ok(result_of_install_jumpers.map(|_| true)?)
+    Ok(true)
 }
 
 fn initialize_logger() -> anyhow::Result<()> {
