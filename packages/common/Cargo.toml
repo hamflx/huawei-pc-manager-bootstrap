@@ -6,10 +6,9 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.56"
 bincode = "1.3.3"
-detour = "0.8.1"
 log = "0.4.14"
 widestring = "0.5.1"
-windows-sys = { version = "0.35.0", features = [
+windows-sys = { version = "0.48.0", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_System_LibraryLoader",
@@ -24,4 +23,5 @@ serde = { version = "1.0", features = ["derive"] }
 lazy_static = "1.4.0"
 directories = "4.0.1"
 serde_json = "1.0.83"
-injectors = "0.1.1"
+injectors = "0.1.2"
+retour = { version = "0.3.1", features = ["static-detour"] }

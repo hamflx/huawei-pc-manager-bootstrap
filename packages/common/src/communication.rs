@@ -82,7 +82,7 @@ impl log::Log for InterProcessComClient {
                     .and_then(Path::file_name)
                     .and_then(OsStr::to_str)
                     .map(String::from)
-                    .unwrap_or_else(String::new);
+                    .unwrap_or_default();
                 let _ = bincode::serialize(&LogItem {
                     target,
                     level: record.level() as usize,

@@ -1,6 +1,6 @@
-use detour::static_detour;
 use injectors::{options::InjectOptions, process::ProcessHandle};
 use log::{error, info, warn};
+use retour::static_detour;
 use std::{
     ffi::{c_void, CStr, CString},
     intrinsics::transmute,
@@ -173,7 +173,7 @@ fn replace_smbios_manufacturer(mut smbios_data: Vec<u8>) -> Vec<u8> {
         let start_entry_ptr: *mut u8 =
             &(*raw_bios_ptr).SMBIOSTableData as *const [u8; 0] as *mut u8;
         let end_ptr = start_entry_ptr.add((*raw_bios_ptr).Length as usize);
-        let mut header_ptr: *mut SMBIOSHEADER = transmute(start_entry_ptr as *mut u8);
+        let mut header_ptr: *mut SMBIOSHEADER = transmute(start_entry_ptr);
         let mut smbios_entry_list: Vec<Vec<u8>> = vec![];
 
         while (header_ptr as usize) < end_ptr as usize {
@@ -354,7 +354,7 @@ fn locate_string(oem_str: *const u8, index: u8) -> Option<String> {
         if i == 0 {
             break;
         }
-        str_ptr = unsafe { str_ptr.add(str_len(str_ptr) as usize + 1) }
+        str_ptr = unsafe { str_ptr.add(str_len(str_ptr) + 1) }
     }
     Some(
         unsafe { CStr::from_ptr(str_ptr as *const i8) }

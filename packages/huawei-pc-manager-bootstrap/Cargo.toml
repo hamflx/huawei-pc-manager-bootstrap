@@ -9,9 +9,9 @@ common = { path = "../common" }
 anyhow = "1.0.56"
 chrono = "0.4.19"
 eframe = "0.17.0" # Gives us egui, epi and web+native backends
-rfd = "0.8.1"
+rfd = "0.11.4"
 ctrlc = "3.2.1"
-windows-sys = { version = "0.35.0", features = [
+windows-sys = { version = "0.48.0", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_System_LibraryLoader",
@@ -26,7 +26,7 @@ log = "0.4.14"
 simplelog = "0.11.2"
 directories = "4.0.1"
 sysinfo = "0.26.2"
-clap = { version = "3.1.12", features = ["derive"] }
+clap = { version = "4.4.2", features = ["derive"] }
 widestring = "1.0.2"
-injectors = "0.1.1"
+injectors = "0.1.2"
 vc-ltl = "5.0.5"

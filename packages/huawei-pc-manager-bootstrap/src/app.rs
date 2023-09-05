@@ -83,7 +83,7 @@ impl BootstrapApp {
         info!("Pc Manager installed dir: {}", pc_manager_dir);
         let mut system = sysinfo::System::new();
         system.refresh_processes();
-        for (_pid, process) in system.processes() {
+        for  process in system.processes().values() {
             if let Some(exe) = process.exe().to_str() {
                 if exe.to_ascii_lowercase().starts_with(&pc_manager_dir) {
                     info!("Found hw process: {}", exe);
@@ -213,7 +213,7 @@ impl BootstrapApp {
 
         let pc_manager_dir: PathBuf = Self::get_pc_manager_dir()?;
         let target_version_dll_path = pc_manager_dir.join("version.dll");
-        std::fs::write(&target_version_dll_path, patch_file_bytes)?;
+        std::fs::write(target_version_dll_path, patch_file_bytes)?;
 
         let mut config_file_path = get_config_dir()?;
         config_file_path.push("config.json");
@@ -346,7 +346,6 @@ impl epi::App for BootstrapApp {
         if let Err(err) = self.install_hooks() {
             self.status_text = format!("Error: {}", err);
             error!("Failed to install hooks: {}", err);
-            return;
         }
     }
 

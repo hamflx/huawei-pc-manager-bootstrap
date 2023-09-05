@@ -43,7 +43,7 @@ fn main() {
         let mut cmd_line: String = std::env::args()
             .skip(1)
             .map(|s| {
-                if s.contains(" ") && !s.starts_with("\"") {
+                if s.contains(' ') && !s.starts_with('"') {
                     format!("\"{}\"", s)
                 } else {
                     s
