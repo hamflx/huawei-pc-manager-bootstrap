@@ -8,6 +8,7 @@ use widestring::WideCString;
 use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
 
 mod app;
+mod logger;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]

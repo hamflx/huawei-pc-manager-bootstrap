@@ -4,11 +4,13 @@ use std::{
     io::Write,
     net::{SocketAddr, TcpListener, TcpStream},
     path::Path,
+    str::FromStr,
     thread::{self, JoinHandle},
 };
 
-use log::{info, Level, Metadata, Record};
 use serde::{Deserialize, Serialize};
+use tracing::{field::Visit, info, Level, Subscriber};
+use tracing_subscriber::Layer;
 
 pub struct InterProcessComServer {
     listener: TcpListener,
@@ -48,8 +50,9 @@ impl InterProcessComServer {
         info!("New client connected from {}", peer_addr);
 
         while let Ok(log_item) = bincode::deserialize_from::<_, LogItem>(&stream) {
-            let level = level_from_usize(log_item.level).unwrap_or(Level::Info);
-            log::log!(target: log_item.target.as_str(), level, "{}", log_item.message);
+            let level = Level::from_str(&log_item.level).unwrap_or(Level::INFO);
+            let target = log_item.target;
+            info!(target: "REMOTE", "{} [{}]: {}", target, level, log_item.message);
         }
 
         Ok(())
@@ -67,13 +70,21 @@ impl InterProcessComClient {
     }
 }
 
-impl log::Log for InterProcessComClient {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Info
+impl<S> Layer<S> for InterProcessComClient
+where
+    S: Subscriber,
+{
+    fn enabled(
+        &self,
+        metadata: &tracing::Metadata<'_>,
+        ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) -> bool {
+        *metadata.level() <= Level::INFO
     }
 
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
+    fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let metadata = event.metadata();
+        if self.enabled(metadata, ctx) {
             if let Ok(mut stream) = self.stream.try_clone() {
                 let target = env::args()
                     .next()
@@ -83,33 +94,38 @@ impl log::Log for InterProcessComClient {
                     .and_then(OsStr::to_str)
                     .map(String::from)
                     .unwrap_or_default();
+                let mut visitor = EventMessageVisitor(String::new());
+                event.record(&mut visitor);
                 let _ = bincode::serialize(&LogItem {
                     target,
-                    level: record.level() as usize,
-                    message: record.args().to_string(),
+                    level: metadata.level().as_str().to_string(),
+                    message: visitor.0,
                 })
                 .map(|bytes| stream.write_all(&bytes));
             }
         }
     }
+}
 
-    fn flush(&self) {}
+struct EventMessageVisitor(String);
+
+impl Visit for EventMessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{:?}", value);
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.0 = format!("{}", value);
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 struct LogItem {
-    level: usize,
+    level: String,
     target: String,
     message: String,
-}
-
-fn level_from_usize(level: usize) -> Option<Level> {
-    match level {
-        1 => Some(Level::Error),
-        2 => Some(Level::Warn),
-        3 => Some(Level::Info),
-        4 => Some(Level::Debug),
-        5 => Some(Level::Trace),
-        _ => None,
-    }
 }

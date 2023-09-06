@@ -10,11 +10,11 @@ crate-type = ["cdylib"]
 anyhow = "1.0.56"
 chrono = "0.4.19"
 common = { path = "../common" }
-simplelog = "0.11.2"
 directories = "4.0.1"
-log = "0.4.14"
 injectors = "0.1.2"
 vc-ltl = "5.0.5"
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"
 
 [build-dependencies]
 forward-dll = "0.1.12"

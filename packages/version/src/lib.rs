@@ -1,8 +1,7 @@
 use std::fs::OpenOptions;
 
 use injectors::options::InjectOptions;
-use log::{error, info};
-use simplelog::{Config, LevelFilter, WriteLogger};
+use tracing::{error, info};
 
 #[no_mangle]
 pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
@@ -59,14 +58,15 @@ fn initialize_logger() -> anyhow::Result<()> {
         now.format("%Y%m%d%H%M%S")
     ));
 
-    WriteLogger::init(
-        LevelFilter::Info,
-        Config::default(),
-        OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(log_file_path)?,
-    )?;
+    tracing_subscriber::fmt()
+        .with_writer(
+            OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(log_file_path)?,
+        )
+        .try_init()
+        .map_err(|err| anyhow::anyhow!("error: {}", err))?;
 
     Ok(())
 }

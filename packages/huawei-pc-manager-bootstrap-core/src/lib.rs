@@ -3,8 +3,8 @@ use std::slice::from_raw_parts;
 
 use common::communication::InterProcessComClient;
 use injectors::options::{InjectOptions, INJECT_OPTIONS_WRAPPER};
-use log::{error, info, LevelFilter};
-use simplelog::{Config, WriteLogger};
+use tracing::{error, info};
+use tracing_subscriber::{prelude::*, util::SubscriberInitExt};
 
 #[no_mangle]
 pub unsafe extern "system" fn enable_hook(opts_ptr: *const INJECT_OPTIONS_WRAPPER) {
@@ -19,8 +19,8 @@ pub unsafe extern "system" fn enable_hook(opts_ptr: *const INJECT_OPTIONS_WRAPPE
         .and_then(|opts| opts.server_address.as_ref())
         .and_then(|addr| InterProcessComClient::connect(addr).ok())
         .map(|client| {
-            log::set_max_level(LevelFilter::Info);
-            log::set_logger(Box::leak(Box::new(client))).ok();
+            // log::set_max_level(LevelFilter::Info);
+            tracing_subscriber::registry().with(client).init();
         })
         .or_else(|| initialize_file_logger().ok());
 
@@ -40,10 +40,10 @@ pub fn initialize_file_logger() -> anyhow::Result<()> {
     let now = chrono::Local::now();
     log_file_path.push(format!("core-{}.log", now.format("%Y%m%d%H%M%S")));
 
-    WriteLogger::init(
-        LevelFilter::Info,
-        Config::default(),
-        File::create(log_file_path)?,
-    )?;
+    tracing_subscriber::fmt::fmt()
+        .with_writer(File::create(log_file_path)?)
+        .try_init()
+        .map_err(|err| anyhow::anyhow!("error: {}", err))?;
+
     Ok(())
 }

@@ -2,6 +2,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
+use std::sync::mpsc::{channel, Receiver};
 use std::thread;
 
 use common::communication::InterProcessComServer;
@@ -12,15 +13,19 @@ use eframe::egui::FontDefinitions;
 use eframe::epaint::{vec2, FontFamily};
 use eframe::{egui, epi};
 use injectors::options::InjectOptions;
-use log::{error, info, warn, LevelFilter};
 use rfd::FileDialog;
-use simplelog::{ConfigBuilder, WriteLogger};
 use sysinfo::{ProcessExt, SystemExt};
+use tracing::{error, info, warn};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::util::SubscriberInitExt;
 use widestring::WideCStr;
 use windows_sys::Win32::UI::Shell::{SHGetSpecialFolderPathW, CSIDL_PROGRAM_FILES};
 
+use crate::logger::CustomLayer;
+
 pub struct BootstrapApp {
     log_file_path: String,
+    log_receiver: Option<Receiver<String>>,
     executable_file_path: String,
     status_text: String,
     log_text: String,
@@ -83,7 +88,7 @@ impl BootstrapApp {
         info!("Pc Manager installed dir: {}", pc_manager_dir);
         let mut system = sysinfo::System::new();
         system.refresh_processes();
-        for  process in system.processes().values() {
+        for process in system.processes().values() {
             if let Some(exe) = process.exe().to_str() {
                 if exe.to_ascii_lowercase().starts_with(&pc_manager_dir) {
                     info!("Found hw process: {}", exe);
@@ -106,15 +111,14 @@ impl BootstrapApp {
         }
     }
 
-    pub fn setup_logger(&self) -> anyhow::Result<()> {
-        let config = ConfigBuilder::new()
-            .set_target_level(LevelFilter::Error)
-            .build();
-        WriteLogger::init(
-            LevelFilter::Debug,
-            config,
-            File::create(&self.log_file_path)?,
-        )?;
+    pub fn setup_logger(&mut self) -> anyhow::Result<()> {
+        // level?
+        let (tx, rx) = channel();
+        self.log_receiver = Some(rx);
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(File::create(&self.log_file_path)?))
+            .with(CustomLayer::new(tx))
+            .try_init()?;
         info!("Logger setup successfully");
         info!("Installer version {}", VERSION);
         let sys = sysinfo::System::new_all();
@@ -125,6 +129,18 @@ impl BootstrapApp {
         );
 
         Ok(())
+    }
+
+    pub fn update_log_text(&mut self) {
+        if let Some(receiver) = &self.log_receiver {
+            match receiver.try_recv() {
+                Ok(msg) => {
+                    self.log_text.push_str(&msg);
+                    self.log_text.push_str("\n");
+                }
+                Err(_) => {}
+            }
+        }
     }
 
     pub fn install_hooks(&self) -> anyhow::Result<()> {
@@ -286,7 +302,7 @@ impl Default for BootstrapApp {
         log_file_path.push(format!("app-{}.log", now.format("%Y%m%d%H%M%S")));
         let log_file_path = log_file_path.to_str().unwrap().to_owned();
         let status_text = String::from(TIPS_BROWSE);
-        let log_text = format!("此处待添加日志的实时显示。\n{}", log_file_path);
+        let log_text = format!("日志文件路径：\n{}\n\n", log_file_path);
 
         Self {
             log_file_path,
@@ -294,6 +310,7 @@ impl Default for BootstrapApp {
             status_text,
             log_text,
             ipc_logger_address: None,
+            log_receiver: None,
         }
     }
 }
@@ -438,6 +455,7 @@ impl epi::App for BootstrapApp {
                     ui.add(egui::Label::new(&self.status_text).wrap(true));
                 });
                 ui.centered_and_justified(|ui| {
+                    self.update_log_text();
                     ui.text_edit_multiline(&mut self.log_text);
                 });
             });

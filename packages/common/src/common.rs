@@ -1,5 +1,4 @@
 use injectors::{options::InjectOptions, process::ProcessHandle};
-use log::{error, info, warn};
 use retour::static_detour;
 use std::{
     ffi::{c_void, CStr, CString},
@@ -7,6 +6,7 @@ use std::{
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::Mutex,
 };
+use tracing::{error, info, warn};
 use widestring::{U16CString, WideCString};
 use windows_sys::{
     core::{PCWSTR, PWSTR},
