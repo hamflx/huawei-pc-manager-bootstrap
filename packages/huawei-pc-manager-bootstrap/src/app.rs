@@ -2,7 +2,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::thread;
 
 use common::communication::InterProcessComServer;
@@ -138,7 +138,10 @@ impl BootstrapApp {
                     self.log_text.push_str(&msg);
                     self.log_text.push_str("\n");
                 }
-                Err(_) => {}
+                Err(TryRecvError::Disconnected) => {
+                    self.log_receiver = None;
+                }
+                Err(TryRecvError::Empty) => {}
             }
         }
     }
