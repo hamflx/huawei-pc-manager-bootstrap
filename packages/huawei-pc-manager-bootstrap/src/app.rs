@@ -9,7 +9,7 @@ use common::communication::InterProcessComServer;
 use common::config::{
     get_cache_dir, get_config_dir, get_config_file_path, save_firmware_config, Config,
 };
-use eframe::egui::FontDefinitions;
+use eframe::egui::{FontDefinitions, ScrollArea};
 use eframe::epaint::{vec2, FontFamily};
 use eframe::{egui, epi};
 use injectors::options::InjectOptions;
@@ -355,7 +355,7 @@ impl epi::App for BootstrapApp {
         frame: &epi::Frame,
         _storage: Option<&dyn epi::Storage>,
     ) {
-        frame.set_window_size(vec2(862f32, 562f32));
+        frame.set_window_size(vec2(1300f32, 700f32));
         let mut fonts = FontDefinitions::default();
         let sys_font = std::fs::read("c:/Windows/Fonts/msyh.ttc").unwrap();
         fonts
@@ -483,8 +483,10 @@ impl epi::App for BootstrapApp {
                     ui.add(egui::Label::new(&self.status_text).wrap(true));
                 });
                 ui.centered_and_justified(|ui| {
-                    self.update_log_text();
-                    ui.text_edit_multiline(&mut self.log_text);
+                    ScrollArea::vertical().show(ui, |ui| {
+                        self.update_log_text();
+                        ui.text_edit_multiline(&mut self.log_text);
+                    });
                 });
             });
         });
