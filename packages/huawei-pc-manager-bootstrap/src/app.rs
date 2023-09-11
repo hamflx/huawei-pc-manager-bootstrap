@@ -13,6 +13,7 @@ use eframe::egui::FontDefinitions;
 use eframe::epaint::{vec2, FontFamily};
 use eframe::{egui, epi};
 use injectors::options::InjectOptions;
+use regex::Regex;
 use rfd::FileDialog;
 use sysinfo::{ProcessExt, SystemExt};
 use tracing::{error, info, warn};
@@ -22,6 +23,7 @@ use widestring::WideCStr;
 use windows_sys::Win32::UI::Shell::{SHGetSpecialFolderPathW, CSIDL_PROGRAM_FILES};
 
 use crate::logger::CustomLayer;
+use crate::version::SetupVersion;
 
 pub struct BootstrapApp {
     log_file_path: String,
@@ -58,26 +60,49 @@ impl BootstrapApp {
                 .to_path_buf(),
             std::env::current_dir()?,
         ];
+        let version_re = Regex::new(r"([0-9]+)(?:\.([0-9]+))*").unwrap();
+        let mut setup_file_list = Vec::new();
         for dir in dirs {
             for file in std::fs::read_dir(dir)? {
                 let file = file?;
                 let file_path = file.path();
-                if let Some(file_name) = file_path.file_name() {
-                    if let Some(file_name) = file_name.to_str() {
-                        if file_name
-                            .to_lowercase()
-                            .contains(&"PCManager_Setup".to_lowercase())
-                        {
-                            if let Some(file_path) = file_path.to_str() {
-                                self.executable_file_path = file_path.to_owned();
-                                return Ok(true);
+                if let Some(file_name) = file_path.file_name().and_then(|f| f.to_str()) {
+                    if file_name
+                        .to_lowercase()
+                        .contains(&"PCManager_Setup".to_lowercase())
+                    {
+                        if let Some(file_path) = file_path.to_str() {
+                            if let Some(found) = version_re.captures(file_name) {
+                                let matched = found.get(0).unwrap().as_str();
+                                match SetupVersion::from_str(matched) {
+                                    Ok(parsed_ver) => {
+                                        setup_file_list.push((file_path.to_owned(), parsed_ver));
+                                    }
+                                    Err(err) => {
+                                        warn!(
+                                            "Parse setup file version ({}) failed: {}",
+                                            matched, err
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
         }
-        Ok(false)
+
+        let latest_setup_file = setup_file_list
+            .into_iter()
+            .max_by(|(_, a_ver), (_, b_ver)| Ord::cmp(a_ver, b_ver));
+
+        match latest_setup_file {
+            Some((latest_setup_file, _)) => {
+                self.executable_file_path = latest_setup_file;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     pub fn terminate_all_processes() -> anyhow::Result<()> {

@@ -1454,6 +1454,7 @@ dependencies = [
  "directories",
  "eframe",
  "injectors",
+ "regex",
  "rfd",
  "sysinfo",
  "tracing",

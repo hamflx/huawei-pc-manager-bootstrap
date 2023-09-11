@@ -9,6 +9,7 @@ use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
 
 mod app;
 mod logger;
+mod version;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]

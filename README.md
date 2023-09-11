@@ -26,7 +26,7 @@
 git clone https://github.com/hamflx/huawei-pc-manager-bootstrap.git
 cd huawei-pc-manager-bootstrap
 
-.\build.bat
+.\build-release.bat
 ```
 
 ## 实现思路
