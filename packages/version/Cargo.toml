@@ -7,12 +7,12 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-anyhow = "1.0.56"
-chrono = "0.4.19"
+anyhow = "1.0.75"
+chrono = "0.4.31"
 common = { path = "../common" }
-directories = "4.0.1"
+directories = "5.0.1"
 injectors = "0.1.2"
-vc-ltl = "5.0.5"
+vc-ltl = "5.0.8"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.17"
 

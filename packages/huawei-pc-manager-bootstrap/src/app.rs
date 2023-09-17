@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
@@ -219,13 +220,14 @@ impl BootstrapApp {
     }
 
     fn auto_scan(&mut self) -> anyhow::Result<bool> {
-        let dirs = [
+        let dirs: HashSet<_> = [
             std::env::current_exe()?
                 .parent()
                 .ok_or_else(|| anyhow::anyhow!("current_exe() failed"))?
                 .to_path_buf(),
             std::env::current_dir()?,
-        ];
+        ]
+        .into();
         let version_re = Regex::new(r"([0-9]+)(?:\.([0-9]+))*").unwrap();
         let mut setup_file_list = Vec::new();
         for dir in dirs {
@@ -234,9 +236,9 @@ impl BootstrapApp {
                 let file = file?;
                 let file_path = file.path();
                 if let Some(file_name) = file_path.file_name().and_then(|f| f.to_str()) {
-                    if file_name
-                        .to_lowercase()
-                        .contains(&"PCManager_Setup".to_lowercase())
+                    let lower_file_name = file_name.to_lowercase();
+                    if lower_file_name.contains(&"PCManager_Setup".to_lowercase())
+                        && lower_file_name.ends_with(".exe")
                     {
                         if let Some(file_path) = file_path.to_str() {
                             if let Some(found) = version_re.captures(file_name) {
