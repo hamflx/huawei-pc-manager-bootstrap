@@ -3,7 +3,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] //Hide console window in release builds on Windows, this blocks stdout.
 #![feature(iter_intersperse)]
 
+use app::BootstrapApp;
 use clap::Parser;
+use iced::{Application, Font, Settings};
 use widestring::WideCString;
 use windows_sys::Win32::UI::Shell::{IsUserAnAdmin, ShellExecuteW};
 
@@ -77,15 +79,18 @@ fn main() {
         app::BootstrapApp::install_patch().unwrap();
     }
 
-    let mut app = app::BootstrapApp::default();
     if let Some(path) = args.install {
+        let mut app = app::BootstrapApp::default();
         app.setup_logger().unwrap();
         app.start_ipc_logger().unwrap();
         app.install_hooks().unwrap();
         app.set_executable_file_path(path);
         app.start_install(true).unwrap();
     } else if !args.terminate && !args.install_patch {
-        let native_options = eframe::NativeOptions::default();
-        eframe::run_native(Box::new(app), native_options);
+        BootstrapApp::run(Settings {
+            default_font: Font::with_name("微软雅黑"),
+            ..Default::default()
+        })
+        .unwrap();
     }
 }

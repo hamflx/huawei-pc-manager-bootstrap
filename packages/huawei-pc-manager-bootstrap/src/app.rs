@@ -9,9 +9,13 @@ use common::communication::InterProcessComServer;
 use common::config::{
     get_cache_dir, get_config_dir, get_config_file_path, save_firmware_config, Config,
 };
-use eframe::egui::{FontDefinitions, ScrollArea};
-use eframe::epaint::{vec2, FontFamily};
-use eframe::{egui, epi};
+use iced::widget::scrollable::{Direction, Properties};
+use iced::widget::{container, row, scrollable, text_input};
+use iced::{executor, Application, Length, Theme};
+use iced::{
+    widget::{button, column, text},
+    Element,
+};
 use injectors::options::InjectOptions;
 use regex::Regex;
 use rfd::FileDialog;
@@ -25,13 +29,18 @@ use windows_sys::Win32::UI::Shell::{SHGetSpecialFolderPathW, CSIDL_PROGRAM_FILES
 use crate::logger::CustomLayer;
 use crate::version::SetupVersion;
 
-pub struct BootstrapApp {
-    log_file_path: String,
-    log_receiver: Option<Receiver<String>>,
-    executable_file_path: String,
-    status_text: String,
-    log_text: String,
-    ipc_logger_address: Option<String>,
+#[derive(Debug, Clone)]
+pub enum Message {
+    ChangeSetupFilePath(String),
+    AutoScanSetup,
+    BrowserSetup,
+    Install,
+    InstallPatch,
+    TerminateAllProcesses,
+    OpenConfigFile,
+    OpenLogFile,
+    OpenLogFileDir,
+    UpdateLogContent,
 }
 
 macro_rules! GET_VERSION {
@@ -41,9 +50,147 @@ macro_rules! GET_VERSION {
 }
 pub const VERSION: &str = GET_VERSION!();
 
+pub struct BootstrapApp {
+    log_file_path: String,
+    log_receiver: Option<Receiver<String>>,
+    executable_file_path: String,
+    status_text: String,
+    log_text: String,
+    ipc_logger_address: Option<String>,
+}
+
+impl Application for BootstrapApp {
+    type Message = Message;
+    type Executor = executor::Default;
+    type Theme = Theme;
+    type Flags = ();
+
+    fn new(_flags: ()) -> (Self, iced::Command<Message>) {
+        let mut inst = Self::default();
+
+        if let Err(err) = inst.setup_logger() {
+            inst.status_text = format!("Error: {}", err);
+            error!("Failed to setup logger: {}", err);
+        }
+
+        if let Err(err) = inst.start_ipc_logger() {
+            inst.status_text = format!("Error: {}", err);
+            error!("Failed to start ipc logger: {}", err);
+        }
+
+        if let Err(err) = inst.install_hooks() {
+            inst.status_text = format!("Error: {}", err);
+            error!("Failed to install hooks: {}", err);
+        }
+
+        (inst, iced::Command::none())
+    }
+
+    fn title(&self) -> String {
+        concat!("华为电脑管家安装器 v", GET_VERSION!()).into()
+    }
+
+    fn update(&mut self, message: Message) -> iced::Command<Message> {
+        match message {
+            Message::ChangeSetupFilePath(path) => self.executable_file_path = path,
+            Message::AutoScanSetup => match self.auto_scan() {
+                Ok(true) => {
+                    self.status_text = String::from(TIPS_AUTO_SCAN_FOUND);
+                }
+                Ok(false) => {
+                    self.status_text = String::from(TIPS_AUTO_SCAN_NOT_FOUND);
+                }
+                Err(err) => {
+                    self.status_text = format!("Error: {}", err);
+                    warn!("Error: {}", err);
+                }
+            },
+            Message::BrowserSetup => self.select_file(),
+            Message::Install => {
+                if let Err(err) = self.start_install(false) {
+                    self.status_text = format!("Installing failed: {}", err);
+                    warn!("Installing failed: {}", err);
+                } else {
+                    self.status_text = "安装成功。".to_owned();
+                    info!("PCManager installed successfully.");
+                }
+            }
+            Message::InstallPatch => {
+                if let Err(err) = Self::install_patch() {
+                    self.status_text = format!("Installing failed: {}", err);
+                    warn!("Installing failed: {}", err);
+                } else {
+                    self.status_text = "安装成功。".to_owned();
+                    info!("Patch installed successfully");
+                }
+            }
+            Message::TerminateAllProcesses => {
+                if let Err(err) = Self::terminate_all_processes() {
+                    self.status_text = format!("Failed to kill all processes: {}", err);
+                    warn!("Failed to kill all processes: {}", err);
+                } else {
+                    self.status_text = "执行成功。".to_owned();
+                    info!("Huawei process terminated successfully");
+                }
+            }
+            Message::OpenConfigFile => {
+                if let Err(err) = self.open_config_file() {
+                    self.status_text = format!("Opening config file failed: {}", err);
+                    warn!("Opening config file failed: {}", err);
+                }
+            }
+            Message::OpenLogFile => self.open_log_file(),
+            Message::OpenLogFileDir => {
+                if let Err(err) = self.open_log_file_dir() {
+                    self.status_text = format!("Opening log dir failed: {}", err);
+                    warn!("Opening log dir failed: {}", err);
+                }
+            }
+            Message::UpdateLogContent => self.update_log_text(),
+        }
+
+        iced::Command::none()
+    }
+
+    fn view(&self) -> Element<'_, Message> {
+        let toolbar = row![
+            button("自动扫描").on_press(Message::AutoScanSetup),
+            button("浏览").on_press(Message::BrowserSetup),
+            button("安装").on_press(Message::Install),
+            button("安装补丁").on_press(Message::InstallPatch),
+            button("终止所有进程").on_press(Message::TerminateAllProcesses),
+            button("打开配置").on_press(Message::OpenConfigFile),
+            button("打开日志").on_press(Message::OpenLogFile),
+            button("打开日志文件夹").on_press(Message::OpenLogFileDir),
+        ]
+        .spacing(8);
+
+        container(
+            column![
+                text("安装包位置"),
+                text_input("", &self.executable_file_path).on_input(Message::ChangeSetupFilePath),
+                toolbar,
+                text(&self.status_text),
+                scrollable(text(&self.log_text))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .direction(Direction::Vertical(
+                        Properties::default().alignment(scrollable::Alignment::End),
+                    ))
+            ]
+            .padding(8)
+            .spacing(8),
+        )
+        .padding(4)
+        .into()
+    }
+
+    fn subscription(&self) -> iced::Subscription<Self::Message> {
+        iced::time::every(std::time::Duration::from_millis(500)).map(|_| Message::UpdateLogContent)
+    }
+}
+
 const TIPS_BROWSE: & str = "点击“浏览”按钮选择华为电脑管家安装包（如：PCManager_Setup_12.0.1.26(C233D003).exe），然后点击“安装”。";
-const TIPS_AUTO_SCAN: &str =
-    "自动扫描当前目录下的华为电脑管家安装包，找到安装包后，需要点击“安装”按钮进行安装。";
 const TIPS_AUTO_SCAN_FOUND: &str = "已找到安装包，点击“安装”按钮进行安装。";
 const TIPS_AUTO_SCAN_NOT_FOUND: &str = "未找到安装包！";
 
@@ -158,15 +305,18 @@ impl BootstrapApp {
 
     pub fn update_log_text(&mut self) {
         if let Some(receiver) = &self.log_receiver {
-            match receiver.try_recv() {
-                Ok(msg) => {
-                    self.log_text.push_str(&msg);
-                    self.log_text.push_str("\n");
+            loop {
+                match receiver.try_recv() {
+                    Ok(msg) => {
+                        self.log_text.push_str(&msg);
+                        self.log_text.push_str("\n");
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        self.log_receiver = None;
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
                 }
-                Err(TryRecvError::Disconnected) => {
-                    self.log_receiver = None;
-                }
-                Err(TryRecvError::Empty) => {}
             }
         }
     }
@@ -340,155 +490,5 @@ impl Default for BootstrapApp {
             ipc_logger_address: None,
             log_receiver: None,
         }
-    }
-}
-
-impl epi::App for BootstrapApp {
-    fn name(&self) -> &str {
-        concat!("华为电脑管家安装器 v", GET_VERSION!())
-    }
-
-    /// Called once before the first frame.
-    fn setup(
-        &mut self,
-        ctx: &egui::Context,
-        frame: &epi::Frame,
-        _storage: Option<&dyn epi::Storage>,
-    ) {
-        frame.set_window_size(vec2(1300f32, 700f32));
-        let mut fonts = FontDefinitions::default();
-        let sys_font = std::fs::read("c:/Windows/Fonts/msyh.ttc").unwrap();
-        fonts
-            .font_data
-            .insert("msyh".to_owned(), egui::FontData::from_owned(sys_font));
-
-        fonts
-            .families
-            .get_mut(&FontFamily::Monospace)
-            .unwrap()
-            .insert(0, "msyh".to_owned());
-        fonts
-            .families
-            .get_mut(&FontFamily::Proportional)
-            .unwrap()
-            .insert(0, "msyh".to_owned());
-        ctx.set_fonts(fonts);
-
-        ctx.set_pixels_per_point(2.0);
-
-        if let Err(err) = self.setup_logger() {
-            self.status_text = format!("Error: {}", err);
-            error!("Failed to setup logger: {}", err);
-            return;
-        }
-
-        if let Err(err) = self.start_ipc_logger() {
-            self.status_text = format!("Error: {}", err);
-            error!("Failed to start ipc logger: {}", err);
-            return;
-        }
-
-        if let Err(err) = self.install_hooks() {
-            self.status_text = format!("Error: {}", err);
-            error!("Failed to install hooks: {}", err);
-        }
-    }
-
-    /// Called each time the UI needs repainting, which may be many times per second.
-    /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
-    fn update(&mut self, ctx: &egui::Context, _frame: &epi::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label("安装包位置：");
-                });
-                ui.horizontal(|ui| {
-                    ui.with_layout(
-                        egui::Layout::left_to_right().with_main_justify(true),
-                        |ui| {
-                            ui.text_edit_singleline(&mut self.executable_file_path);
-                        },
-                    );
-                });
-                ui.horizontal(|ui| {
-                    let auto_scan_button = ui.button("自动扫描").on_hover_text(TIPS_AUTO_SCAN);
-                    if auto_scan_button.clicked() {
-                        match self.auto_scan() {
-                            Ok(true) => {
-                                self.status_text = String::from(TIPS_AUTO_SCAN_FOUND);
-                            }
-                            Ok(false) => {
-                                self.status_text = String::from(TIPS_AUTO_SCAN_NOT_FOUND);
-                            }
-                            Err(err) => {
-                                self.status_text = format!("Error: {}", err);
-                                warn!("Error: {}", err);
-                            }
-                        }
-                    }
-
-                    let browse_button = ui.button("浏览").on_hover_text(TIPS_BROWSE);
-                    if browse_button.clicked() {
-                        self.select_file();
-                    }
-
-                    if ui.button("安装").clicked() {
-                        if let Err(err) = self.start_install(false) {
-                            self.status_text = format!("Installing failed: {}", err);
-                            warn!("Installing failed: {}", err);
-                        } else {
-                            self.status_text = "安装成功。".to_owned();
-                            info!("PCManager installed successfully.");
-                        }
-                    }
-
-                    if ui.button("安装补丁").clicked() {
-                        if let Err(err) = Self::install_patch() {
-                            self.status_text = format!("Installing failed: {}", err);
-                            warn!("Installing failed: {}", err);
-                        } else {
-                            self.status_text = "安装成功。".to_owned();
-                            info!("Patch installed successfully");
-                        }
-                    }
-
-                    if ui.button("终止所有进程").clicked() {
-                        if let Err(err) = Self::terminate_all_processes() {
-                            self.status_text = format!("Failed to kill all processes: {}", err);
-                            warn!("Failed to kill all processes: {}", err);
-                        } else {
-                            self.status_text = "执行成功。".to_owned();
-                            info!("Huawei process terminated successfully");
-                        }
-                    }
-
-                    if ui.button("打开配置").clicked() {
-                        if let Err(err) = self.open_config_file() {
-                            self.status_text = format!("Opening config file failed: {}", err);
-                            warn!("Opening config file failed: {}", err);
-                        }
-                    }
-
-                    if ui.button("打开日志").clicked() {
-                        self.open_log_file();
-                    }
-                    if ui.button("打开日志文件夹").clicked() {
-                        if let Err(err) = self.open_log_file_dir() {
-                            self.status_text = format!("Opening log dir failed: {}", err);
-                            warn!("Opening log dir failed: {}", err);
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.add(egui::Label::new(&self.status_text).wrap(true));
-                });
-                ui.centered_and_justified(|ui| {
-                    ScrollArea::vertical().show(ui, |ui| {
-                        self.update_log_text();
-                        ui.text_edit_multiline(&mut self.log_text);
-                    });
-                });
-            });
-        });
     }
 }

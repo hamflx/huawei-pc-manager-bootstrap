@@ -8,7 +8,7 @@ common = { path = "../common" }
 
 anyhow = "1.0.56"
 chrono = "0.4.19"
-eframe = "0.17.0" # Gives us egui, epi and web+native backends
+iced = { version = "0.10", features = ["tokio"] }
 rfd = "0.11.4"
 ctrlc = "3.2.1"
 windows-sys = { version = "0.48.0", features = [
