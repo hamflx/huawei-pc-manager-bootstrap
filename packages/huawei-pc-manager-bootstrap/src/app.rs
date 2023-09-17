@@ -1,14 +1,15 @@
+use std::cell::RefCell;
 use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::thread;
 
 use common::communication::InterProcessComServer;
 use common::config::{
     get_cache_dir, get_config_dir, get_config_file_path, save_firmware_config, Config,
 };
+use iced::futures::SinkExt;
 use iced::widget::scrollable::{Direction, Properties};
 use iced::widget::{container, row, scrollable, text_input};
 use iced::{executor, Application, Length, Theme};
@@ -20,6 +21,7 @@ use injectors::options::InjectOptions;
 use regex::Regex;
 use rfd::FileDialog;
 use sysinfo::{ProcessExt, SystemExt};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{error, info, warn};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -40,7 +42,7 @@ pub enum Message {
     OpenConfigFile,
     OpenLogFile,
     OpenLogFileDir,
-    UpdateLogContent,
+    UpdateLogContent(String),
 }
 
 macro_rules! GET_VERSION {
@@ -52,7 +54,8 @@ pub const VERSION: &str = GET_VERSION!();
 
 pub struct BootstrapApp {
     log_file_path: String,
-    log_receiver: Option<Receiver<String>>,
+    log_receiver: RefCell<Option<Receiver<String>>>,
+    log_sender: Sender<String>,
     executable_file_path: String,
     status_text: String,
     log_text: String,
@@ -68,7 +71,7 @@ impl Application for BootstrapApp {
     fn new(_flags: ()) -> (Self, iced::Command<Message>) {
         let mut inst = Self::default();
 
-        if let Err(err) = inst.setup_logger() {
+        if let Err(err) = inst.setup_logger(true) {
             inst.status_text = format!("Error: {}", err);
             error!("Failed to setup logger: {}", err);
         }
@@ -146,7 +149,10 @@ impl Application for BootstrapApp {
                     warn!("Opening log dir failed: {}", err);
                 }
             }
-            Message::UpdateLogContent => self.update_log_text(),
+            Message::UpdateLogContent(msg) => {
+                self.log_text.push_str(&msg);
+                self.log_text.push_str("\n");
+            }
         }
 
         iced::Command::none()
@@ -186,7 +192,20 @@ impl Application for BootstrapApp {
     }
 
     fn subscription(&self) -> iced::Subscription<Self::Message> {
-        iced::time::every(std::time::Duration::from_millis(500)).map(|_| Message::UpdateLogContent)
+        if let Some(mut receiver) = self.log_receiver.take() {
+            iced::subscription::channel("check_log", 500, |mut output| async move {
+                loop {
+                    match receiver.recv().await {
+                        Some(msg) => {
+                            let _ = output.send(Message::UpdateLogContent(msg)).await;
+                        }
+                        _ => futures::future::pending().await,
+                    }
+                }
+            })
+        } else {
+            iced::subscription::channel("check_log", 500, |_| futures::future::pending())
+        }
     }
 }
 
@@ -210,6 +229,7 @@ impl BootstrapApp {
         let version_re = Regex::new(r"([0-9]+)(?:\.([0-9]+))*").unwrap();
         let mut setup_file_list = Vec::new();
         for dir in dirs {
+            info!("扫描目录：{}", dir.display());
             for file in std::fs::read_dir(dir)? {
                 let file = file?;
                 let file_path = file.path();
@@ -223,6 +243,7 @@ impl BootstrapApp {
                                 let matched = found.get(0).unwrap().as_str();
                                 match SetupVersion::from_str(matched) {
                                     Ok(parsed_ver) => {
+                                        info!("  找到安装包：{}", file_path);
                                         setup_file_list.push((file_path.to_owned(), parsed_ver));
                                     }
                                     Err(err) => {
@@ -245,10 +266,14 @@ impl BootstrapApp {
 
         match latest_setup_file {
             Some((latest_setup_file, _)) => {
+                info!("找到最匹配的安装包：{}", latest_setup_file);
                 self.executable_file_path = latest_setup_file;
                 Ok(true)
             }
-            _ => Ok(false),
+            _ => {
+                warn!("没有找到安装包！");
+                Ok(false)
+            }
         }
     }
 
@@ -283,14 +308,19 @@ impl BootstrapApp {
         }
     }
 
-    pub fn setup_logger(&mut self) -> anyhow::Result<()> {
+    pub fn setup_logger(&mut self, with_gui: bool) -> anyhow::Result<()> {
         // level?
-        let (tx, rx) = channel();
-        self.log_receiver = Some(rx);
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(File::create(&self.log_file_path)?))
-            .with(CustomLayer::new(tx))
-            .try_init()?;
+        let tx = self.log_sender.clone();
+        let common_layer = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(File::create(&self.log_file_path)?),
+        );
+        if with_gui {
+            common_layer.with(CustomLayer::new(tx)).try_init()?;
+        } else {
+            common_layer.try_init()?;
+        }
         info!("Logger setup successfully");
         info!("Installer version {}", VERSION);
         let sys = sysinfo::System::new_all();
@@ -301,24 +331,6 @@ impl BootstrapApp {
         );
 
         Ok(())
-    }
-
-    pub fn update_log_text(&mut self) {
-        if let Some(receiver) = &self.log_receiver {
-            loop {
-                match receiver.try_recv() {
-                    Ok(msg) => {
-                        self.log_text.push_str(&msg);
-                        self.log_text.push_str("\n");
-                    }
-                    Err(TryRecvError::Disconnected) => {
-                        self.log_receiver = None;
-                        break;
-                    }
-                    Err(TryRecvError::Empty) => break,
-                }
-            }
-        }
     }
 
     pub fn install_hooks(&self) -> anyhow::Result<()> {
@@ -481,14 +493,15 @@ impl Default for BootstrapApp {
         let log_file_path = log_file_path.to_str().unwrap().to_owned();
         let status_text = String::from(TIPS_BROWSE);
         let log_text = format!("日志文件路径：\n{}\n\n", log_file_path);
-
+        let (tx, rx) = channel(500);
         Self {
             log_file_path,
             executable_file_path: String::new(),
             status_text,
             log_text,
             ipc_logger_address: None,
-            log_receiver: None,
+            log_receiver: RefCell::new(Some(rx)),
+            log_sender: tx,
         }
     }
 }

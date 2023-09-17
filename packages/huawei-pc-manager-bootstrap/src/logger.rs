@@ -1,5 +1,4 @@
-use std::sync::mpsc::Sender;
-
+use tokio::sync::mpsc::Sender;
 use tracing_subscriber::Layer;
 
 pub struct CustomLayer(Sender<String>);
@@ -27,8 +26,8 @@ where
 
         let mut visitor = CustomVisitor(String::new());
         event.record(&mut visitor);
-        let msg = format!("[{}] {} {}", meta.target(), meta.name(), visitor.0);
-        self.0.send(msg).unwrap();
+        let msg = format!("[{}] {}", meta.target(), visitor.0);
+        let _ = self.0.try_send(msg);
     }
 }
 

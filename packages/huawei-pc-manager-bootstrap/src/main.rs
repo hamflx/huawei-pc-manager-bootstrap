@@ -81,7 +81,7 @@ fn main() {
 
     if let Some(path) = args.install {
         let mut app = app::BootstrapApp::default();
-        app.setup_logger().unwrap();
+        app.setup_logger(false).unwrap();
         app.start_ipc_logger().unwrap();
         app.install_hooks().unwrap();
         app.set_executable_file_path(path);

@@ -1309,11 +1309,13 @@ dependencies = [
  "common",
  "ctrlc",
  "directories",
+ "futures",
  "iced",
  "injectors",
  "regex",
  "rfd",
  "sysinfo",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "vc-ltl",
@@ -1396,7 +1398,6 @@ dependencies = [
  "futures",
  "iced_core",
  "log",
- "tokio",
  "wasm-bindgen-futures",
  "wasm-timer",
 ]
@@ -3047,7 +3048,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17ed6077ed6cd6c74735e21f37eb16dc3935f96878b1fe961074089cc80893f9"
 dependencies = [
  "backtrace",
- "num_cpus",
  "pin-project-lite",
 ]
 

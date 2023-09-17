@@ -77,7 +77,7 @@ where
     fn enabled(
         &self,
         metadata: &tracing::Metadata<'_>,
-        ctx: tracing_subscriber::layer::Context<'_, S>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
         *metadata.level() <= Level::INFO
     }
