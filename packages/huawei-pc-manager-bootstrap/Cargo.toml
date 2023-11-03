@@ -9,7 +9,7 @@ common = { path = "../common" }
 anyhow = "1.0.75"
 backtrace = "0.3"
 chrono = "0.4.31"
-iced = { version = "0.10.0" }
+iced = { version = "0.10.0", features = [], default-features = false }
 rfd = "0.12.0"
 ctrlc = "3.4.1"
 windows-sys = { version = "0.48.0", features = [
