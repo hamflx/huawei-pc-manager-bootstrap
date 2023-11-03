@@ -33,6 +33,18 @@ pub fn get_cache_dir() -> anyhow::Result<PathBuf> {
     ensure_dir_exists(get_project_dir()?.cache_dir().to_path_buf())
 }
 
+pub fn get_log_path() -> anyhow::Result<PathBuf> {
+    let log_file_path = get_cache_dir()?;
+    let now = chrono::Local::now();
+    Ok(log_file_path.join(format!("app-{}.log", now.format("%Y%m%d%H%M%S"))))
+}
+
+pub fn get_panics_log_path() -> anyhow::Result<PathBuf> {
+    let log_file_path = get_cache_dir()?;
+    let now = chrono::Local::now();
+    Ok(log_file_path.join(format!("app-panics-{}.log", now.format("%Y%m%d%H%M%S"))))
+}
+
 pub fn get_config_dir() -> anyhow::Result<PathBuf> {
     ensure_dir_exists(get_project_dir()?.config_dir().to_path_buf())
 }

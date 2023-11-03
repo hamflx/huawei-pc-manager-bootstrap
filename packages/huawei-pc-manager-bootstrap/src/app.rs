@@ -8,7 +8,7 @@ use std::thread;
 
 use common::communication::InterProcessComServer;
 use common::config::{
-    get_cache_dir, get_config_dir, get_config_file_path, save_firmware_config, Config,
+    get_config_dir, get_config_file_path, get_log_path, save_firmware_config, Config,
 };
 use iced::futures::SinkExt;
 use iced::widget::scrollable::{Direction, Properties};
@@ -53,7 +53,12 @@ macro_rules! GET_VERSION {
 }
 pub const VERSION: &str = GET_VERSION!();
 
-pub struct BootstrapApp {
+#[derive(Default)]
+pub(crate) struct AppInitializationParams {
+    pub(crate) log_file_path: String,
+}
+
+pub(crate) struct BootstrapApp {
     log_file_path: String,
     log_receiver: RefCell<Option<Receiver<String>>>,
     log_sender: Sender<String>,
@@ -67,10 +72,10 @@ impl Application for BootstrapApp {
     type Message = Message;
     type Executor = executor::Default;
     type Theme = Theme;
-    type Flags = ();
+    type Flags = AppInitializationParams;
 
-    fn new(_flags: ()) -> (Self, iced::Command<Message>) {
-        let mut inst = Self::default();
+    fn new(params: AppInitializationParams) -> (Self, iced::Command<Message>) {
+        let mut inst = Self::new_with_config(params);
 
         if let Err(err) = inst.setup_logger(true) {
             inst.status_text = format!("Error: {}", err);
@@ -215,6 +220,40 @@ const TIPS_AUTO_SCAN_FOUND: &str = "已找到安装包，点击“安装”按�
 const TIPS_AUTO_SCAN_NOT_FOUND: &str = "未找到安装包！";
 
 impl BootstrapApp {
+    pub(crate) fn new_default_config() -> anyhow::Result<Self> {
+        let log_file_path = get_log_path()?
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Failed to convert to str"))?
+            .to_owned();
+        let status_text = String::from(TIPS_BROWSE);
+        let log_text = format!("日志文件路径：\n{}\n\n", log_file_path);
+        let (tx, rx) = channel(500);
+        Ok(Self {
+            log_file_path,
+            executable_file_path: String::new(),
+            status_text,
+            log_text,
+            ipc_logger_address: None,
+            log_receiver: RefCell::new(Some(rx)),
+            log_sender: tx,
+        })
+    }
+
+    pub(crate) fn new_with_config(params: AppInitializationParams) -> Self {
+        let status_text = String::from(TIPS_BROWSE);
+        let log_text = format!("日志文件路径：\n{}\n\n", params.log_file_path);
+        let (tx, rx) = channel(500);
+        Self {
+            log_file_path: params.log_file_path,
+            executable_file_path: String::new(),
+            status_text,
+            log_text,
+            ipc_logger_address: None,
+            log_receiver: RefCell::new(Some(rx)),
+            log_sender: tx,
+        }
+    }
+
     pub fn set_executable_file_path(&mut self, path: String) {
         self.executable_file_path = path;
     }
@@ -228,7 +267,7 @@ impl BootstrapApp {
             std::env::current_dir()?,
         ]
         .into();
-        let version_re = Regex::new(r"([0-9]+)(?:\.([0-9]+))*").unwrap();
+        let version_re = Regex::new(r"([0-9]+)(?:\.([0-9]+))*")?;
         let mut setup_file_list = Vec::new();
         for dir in dirs {
             info!("扫描目录：{}", dir.display());
@@ -349,7 +388,10 @@ impl BootstrapApp {
         server.start();
 
         self.ipc_logger_address = Some(address.to_string());
-        info!("Listening on {}", self.ipc_logger_address.as_ref().unwrap());
+        info!(
+            "Listening on {}",
+            self.ipc_logger_address.as_deref().unwrap_or_default()
+        );
 
         Ok(())
     }
@@ -459,12 +501,7 @@ impl BootstrapApp {
     fn get_pc_manager_dir() -> anyhow::Result<PathBuf> {
         let mut path_buffer = [0; 4096];
         let get_dir_success = unsafe {
-            SHGetSpecialFolderPathW(
-                0,
-                path_buffer.as_mut_ptr(),
-                CSIDL_PROGRAM_FILES.try_into().unwrap(),
-                0,
-            )
+            SHGetSpecialFolderPathW(0, path_buffer.as_mut_ptr(), CSIDL_PROGRAM_FILES as _, 0)
         } != 0;
         if !get_dir_success {
             return Err(anyhow::anyhow!(
@@ -483,27 +520,5 @@ impl BootstrapApp {
         };
 
         Ok([program_files_dir, "Huawei", "PCManager"].iter().collect())
-    }
-}
-
-impl Default for BootstrapApp {
-    fn default() -> Self {
-        let now = chrono::Local::now();
-
-        let mut log_file_path = get_cache_dir().unwrap();
-        log_file_path.push(format!("app-{}.log", now.format("%Y%m%d%H%M%S")));
-        let log_file_path = log_file_path.to_str().unwrap().to_owned();
-        let status_text = String::from(TIPS_BROWSE);
-        let log_text = format!("日志文件路径：\n{}\n\n", log_file_path);
-        let (tx, rx) = channel(500);
-        Self {
-            log_file_path,
-            executable_file_path: String::new(),
-            status_text,
-            log_text,
-            ipc_logger_address: None,
-            log_receiver: RefCell::new(Some(rx)),
-            log_sender: tx,
-        }
     }
 }

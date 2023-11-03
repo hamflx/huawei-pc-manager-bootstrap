@@ -359,7 +359,7 @@ fn locate_string(oem_str: *const u8, index: u8) -> Option<String> {
     Some(
         unsafe { CStr::from_ptr(str_ptr as *const i8) }
             .to_str()
-            .unwrap()
+            .ok()?
             .to_string(),
     )
 }
@@ -389,15 +389,39 @@ fn detour_create_process(
     proc_info: *mut PROCESS_INFORMATION,
 ) -> BOOL {
     unsafe {
-        let app_name_string = if app_name.is_null() {
-            String::new()
-        } else {
-            U16CString::from_ptr_str(app_name).to_string().unwrap()
-        };
-        let cmd_line_string = if cmd_line.is_null() {
-            String::new()
-        } else {
-            U16CString::from_ptr_str(cmd_line).to_string().unwrap()
+        let app_name_string = app_name
+            .as_ref()
+            .map(|app_name| U16CString::from_ptr_str(app_name).to_string())
+            .unwrap_or_else(|| Ok(String::new()));
+        let cmd_line_string = cmd_line
+            .as_ref()
+            .map(|cmd_line| U16CString::from_ptr_str(cmd_line).to_string())
+            .unwrap_or_else(|| Ok(String::new()));
+        let (app_name_string, cmd_line_string) = match (app_name_string, cmd_line_string) {
+            (Ok(a), Ok(b)) => (a, b),
+            (a, c) => {
+                match (a, c) {
+                    (Err(err), _) => {
+                        error!("Failed to parse app_name: {err}")
+                    }
+                    (_, Err(err)) => {
+                        error!("Failed to parse cmd_line: {err}")
+                    }
+                    _ => {}
+                }
+                return HookCreateProcessW.call(
+                    app_name,
+                    cmd_line,
+                    proc_attrs,
+                    th_attrs,
+                    inherit,
+                    flags,
+                    env,
+                    cur_dir,
+                    startup_info,
+                    proc_info,
+                );
+            }
         };
         info!("CreateProcessW: {} {}", app_name_string, cmd_line_string);
 

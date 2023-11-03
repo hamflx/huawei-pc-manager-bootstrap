@@ -7,6 +7,7 @@ edition = "2021"
 common = { path = "../common" }
 
 anyhow = "1.0.75"
+backtrace = "0.3"
 chrono = "0.4.31"
 iced = { version = "0.10.0" }
 rfd = "0.12.0"

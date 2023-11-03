@@ -529,6 +529,7 @@ version = "0.1.9"
 dependencies = [
  "anyhow",
  "bincode",
+ "chrono",
  "directories",
  "injectors",
  "lazy_static",
@@ -1225,6 +1226,7 @@ name = "huawei-pc-manager-bootstrap"
 version = "0.1.9"
 dependencies = [
  "anyhow",
+ "backtrace",
  "chrono",
  "clap",
  "common",
