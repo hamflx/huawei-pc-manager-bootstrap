@@ -24,6 +24,7 @@ use rfd::FileDialog;
 use sysinfo::{ProcessExt, SystemExt};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{error, info, warn};
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::util::SubscriberInitExt;
 use widestring::WideCStr;
@@ -350,12 +351,12 @@ impl BootstrapApp {
     }
 
     pub fn setup_logger(&mut self, with_gui: bool) -> anyhow::Result<()> {
-        // level?
         let tx = self.log_sender.clone();
         let common_layer = tracing_subscriber::registry().with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
-                .with_writer(File::create(&self.log_file_path)?),
+                .with_writer(File::create(&self.log_file_path)?)
+                .with_filter(LevelFilter::DEBUG),
         );
         if with_gui {
             common_layer.with(CustomLayer::new(tx)).try_init()?;
