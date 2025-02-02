@@ -455,12 +455,7 @@ impl BootstrapApp {
     }
 
     pub fn install_patch() -> anyhow::Result<()> {
-        #[cfg(debug_assertions)]
-        let patch_file_bytes =
-            include_bytes!("../../../target/x86_64-pc-windows-msvc/debug/version.dll");
-        #[cfg(not(debug_assertions))]
-        let patch_file_bytes =
-            include_bytes!("../../../target/x86_64-pc-windows-msvc/release/version.dll");
+        let patch_file_bytes = include_bytes!(env!("CARGO_CDYLIB_FILE_VERSION_version"));
 
         let pc_manager_dir: PathBuf = Self::get_pc_manager_dir()?;
         let target_version_dll_path = pc_manager_dir.join("version.dll");

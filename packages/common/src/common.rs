@@ -459,7 +459,8 @@ fn detour_create_process(
                 .unwrap_or(true);
             if should_inject {
                 let process = ProcessHandle::from_handle((*proc_info).hProcess);
-                if let Err(err) = process.inject_to_process(opts, LIBRARY_NAME) {
+                let inject_result = process.inject_to_process(opts, LIBRARY_NAME);
+                if let Err(err) = inject_result {
                     warn!("inject_to_process error: {}", err);
                 }
             } else {
