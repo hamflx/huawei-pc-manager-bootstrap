@@ -11,7 +11,7 @@
 典型使用案例：
 
 1. 帮我分析一下生产数据库 token 使用量。
-2. 帮我调研“AGI 还有多久能够到来”。
+2. 每天 18:00 调研一下 Weixin ClawBot 对图片、视频、markdown 支持情况，并发送到我的微信。
 3. 微信【关注公众号在公众号发送消息】：把桌面上的截图发给我。
 
 <img width="1796" height="1196" alt="image" src="https://github.com/user-attachments/assets/14b500cf-12ea-4c66-a629-ba9b13c507c8" />
