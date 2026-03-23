@@ -1,5 +1,23 @@
 # 华为电脑管家安装包启动器
 
+---
+
+## Mentium
+
+一个支持**微信操作电脑**（**多设备互通**，支持 **Weixin ClawBot**）、连接数据库、工作调研等工作、生活全能小助手(aka MentiumClaw 😂)。
+
+前往下载：<https://mentium.app>，图形化界面，一键安装。发布：<https://x.com/hamflx/status/2036090507877834763>
+
+典型使用案例：
+
+1. 帮我分析一下生产数据库 token 使用量。
+2. 帮我调研“AGI 还有多久能够到来”。
+3. 微信【关注公众号在公众号发送消息】：把桌面上的截图发给我。
+
+<img width="1188" height="459" alt="image" src="https://github.com/user-attachments/assets/79cdbf2f-855c-4be7-bd1c-0e02ccbc6e83" />
+
+---
+
 该仓库用以解决华为电脑管家 V12 无法在非华为电脑上安装的问题。
 
 ## 使用方式
