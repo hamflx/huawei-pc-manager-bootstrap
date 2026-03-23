@@ -14,6 +14,8 @@
 2. 帮我调研“AGI 还有多久能够到来”。
 3. 微信【关注公众号在公众号发送消息】：把桌面上的截图发给我。
 
+<img width="1796" height="1196" alt="image" src="https://github.com/user-attachments/assets/14b500cf-12ea-4c66-a629-ba9b13c507c8" />
+
 <img width="1188" height="459" alt="image" src="https://github.com/user-attachments/assets/79cdbf2f-855c-4be7-bd1c-0e02ccbc6e83" />
 
 ---
