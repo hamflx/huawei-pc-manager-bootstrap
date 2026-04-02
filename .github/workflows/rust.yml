@@ -1,0 +1,38 @@
+name: Build Huawei PC Manager Bootstrap
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Build project
+      run: cargo build --release
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: huawei-pc-manager-bootstrap
+        path: target/release/huawei-pc-manager-bootstrap.exe
