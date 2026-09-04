@@ -14,9 +14,7 @@
 2. 每天 18:00 调研一下 Weixin ClawBot 对图片、视频、markdown 支持情况，并发送到我的微信。
 3. 微信【关注公众号在公众号发送消息】：把桌面上的截图发给我。
 
-<img width="1796" height="1196" alt="image" src="https://github.com/user-attachments/assets/14b500cf-12ea-4c66-a629-ba9b13c507c8" />
-
-<img width="1188" height="459" alt="image" src="https://github.com/user-attachments/assets/79cdbf2f-855c-4be7-bd1c-0e02ccbc6e83" />
+<img width="1500" height="1037" alt="image" src="https://github.com/user-attachments/assets/afac23e3-c5cf-4f9b-9ca3-b96e94798e3d" />
 
 ---
 
