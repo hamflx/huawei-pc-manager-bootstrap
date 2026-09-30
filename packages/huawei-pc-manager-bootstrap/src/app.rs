@@ -33,6 +33,8 @@ use windows_sys::Win32::UI::Shell::{SHGetSpecialFolderPathW, CSIDL_PROGRAM_FILES
 use crate::logger::CustomLayer;
 use crate::version::SetupVersion;
 
+mod install;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     ChangeSetupFilePath(String),
@@ -40,6 +42,7 @@ pub enum Message {
     BrowserSetup,
     Install,
     InstallPatch,
+    InstallFinished(Result<(), String>),
     TerminateAllProcesses,
     OpenConfigFile,
     OpenLogFile,
@@ -67,6 +70,7 @@ pub(crate) struct BootstrapApp {
     status_text: String,
     log_text: String,
     ipc_logger_address: Option<String>,
+    installation_running: bool,
 }
 
 impl Application for BootstrapApp {
@@ -101,6 +105,23 @@ impl Application for BootstrapApp {
     }
 
     fn update(&mut self, message: Message) -> iced::Command<Message> {
+        // Guard queued messages too: disabling buttons alone does not stop a
+        // second click that was queued before the installation began.
+        if self.installation_running
+            && matches!(
+                &message,
+                Message::ChangeSetupFilePath(_)
+                    | Message::AutoScanSetup
+                    | Message::BrowserSetup
+                    | Message::Install
+                    | Message::InstallPatch
+                    | Message::TerminateAllProcesses
+                    | Message::OpenConfigFile
+            )
+        {
+            return iced::Command::none();
+        }
+
         match message {
             Message::ChangeSetupFilePath(path) => self.executable_file_path = path,
             Message::AutoScanSetup => match self.auto_scan() {
@@ -117,21 +138,23 @@ impl Application for BootstrapApp {
             },
             Message::BrowserSetup => self.select_file(),
             Message::Install => {
-                if let Err(err) = self.start_install(false) {
-                    self.status_text = format!("Installing failed: {}", err);
-                    warn!("Installing failed: {}", err);
-                } else {
-                    self.status_text = "安装成功。".to_owned();
-                    info!("PCManager installed successfully.");
-                }
+                let executable_file_path = self.executable_file_path.clone();
+                return self.start_gui_install(move || Self::run_install(&executable_file_path));
             }
             Message::InstallPatch => {
-                if let Err(err) = Self::install_patch() {
-                    self.status_text = format!("Installing failed: {}", err);
-                    warn!("Installing failed: {}", err);
-                } else {
-                    self.status_text = "安装成功。".to_owned();
-                    info!("Patch installed successfully");
+                return self.start_gui_install(Self::install_patch);
+            }
+            Message::InstallFinished(result) => {
+                self.installation_running = false;
+                match result {
+                    Ok(()) => {
+                        self.status_text = "安装任务已完成，请验证电脑管家功能。".to_owned();
+                        info!("Installation task completed; verify PCManager functionality.");
+                    }
+                    Err(err) => {
+                        self.status_text = format!("Installing failed: {}", err);
+                        warn!("Installing failed: {}", err);
+                    }
                 }
             }
             Message::TerminateAllProcesses => {
@@ -166,22 +189,34 @@ impl Application for BootstrapApp {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        let action_button = |label: &'static str, message| {
+            let button = button(label);
+            if self.installation_running {
+                button
+            } else {
+                button.on_press(message)
+            }
+        };
         let toolbar = row![
-            button("自动扫描").on_press(Message::AutoScanSetup),
-            button("浏览").on_press(Message::BrowserSetup),
-            button("安装").on_press(Message::Install),
-            button("安装补丁").on_press(Message::InstallPatch),
-            button("终止所有进程").on_press(Message::TerminateAllProcesses),
-            button("打开配置").on_press(Message::OpenConfigFile),
+            action_button("自动扫描", Message::AutoScanSetup),
+            action_button("浏览", Message::BrowserSetup),
+            action_button("安装", Message::Install),
+            action_button("安装补丁", Message::InstallPatch),
+            action_button("终止所有进程", Message::TerminateAllProcesses),
+            action_button("打开配置", Message::OpenConfigFile),
             button("打开日志").on_press(Message::OpenLogFile),
             button("打开日志文件夹").on_press(Message::OpenLogFileDir),
         ]
         .spacing(8);
+        let mut setup_path_input = text_input("", &self.executable_file_path);
+        if !self.installation_running {
+            setup_path_input = setup_path_input.on_input(Message::ChangeSetupFilePath);
+        }
 
         container(
             column![
                 text("安装包位置"),
-                text_input("", &self.executable_file_path).on_input(Message::ChangeSetupFilePath),
+                setup_path_input,
                 toolbar,
                 text(&self.status_text),
                 scrollable(text(&self.log_text))
@@ -235,6 +270,7 @@ impl BootstrapApp {
             status_text,
             log_text,
             ipc_logger_address: None,
+            installation_running: false,
             log_receiver: RefCell::new(Some(rx)),
             log_sender: tx,
         })
@@ -250,6 +286,7 @@ impl BootstrapApp {
             status_text,
             log_text,
             ipc_logger_address: None,
+            installation_running: false,
             log_receiver: RefCell::new(Some(rx)),
             log_sender: tx,
         }
@@ -397,65 +434,32 @@ impl BootstrapApp {
         Ok(())
     }
 
-    pub fn start_install(&self, wait: bool) -> anyhow::Result<()> {
-        let executable_file_path = self.executable_file_path.clone();
-        let install_thread = thread::spawn(move || {
-            info!("Executing {}", executable_file_path);
-            match Command::new(&executable_file_path).spawn() {
-                Ok(mut wait_handle) => {
-                    let mut is_patch_installed = false;
-                    info!("Executed {}", executable_file_path);
-                    loop {
-                        match wait_handle.try_wait() {
-                            Ok(Some(exit_status)) => {
-                                info!(
-                                    "{} exited with status {}",
-                                    executable_file_path, exit_status
-                                );
-                                break;
-                            }
-                            Ok(None) => {
-                                if !is_patch_installed {
-                                    match Self::check_pc_manager_installed() {
-                                        Ok(true) => match Self::install_patch() {
-                                            Ok(_) => {
-                                                is_patch_installed = true;
-                                                info!("Installed patch successfully");
-                                            }
-                                            Err(e) => {
-                                                warn!("Failed to install patch: {}", e);
-                                            }
-                                        },
-                                        Ok(false) => {
-                                            info!("PCManager is not installed, wating ...");
-                                        }
-                                        Err(err) => {
-                                            warn!("Failed to check PC Manager installed: {}", err);
-                                        }
-                                    }
-                                }
-                                thread::sleep(std::time::Duration::from_millis(100));
-                            }
-                            Err(e) => {
-                                warn!("{} exited with error: {}", executable_file_path, e);
-                                break;
-                            }
-                        }
-                    }
-                }
-                Err(e) => warn!("Failed to execute {}: {}", executable_file_path, e),
-            }
-        });
+    /// Run the installer to completion. The CLI must receive its final result.
+    pub fn start_install(&self) -> anyhow::Result<()> {
+        Self::run_install(&self.executable_file_path)
+    }
 
-        if wait {
-            install_thread.join().unwrap();
-        }
+    fn run_install(executable_file_path: &str) -> anyhow::Result<()> {
+        install::run(
+            executable_file_path,
+            || Self::check_pc_manager_installed().map_err(|err| format!("{err:#}")),
+            || Self::install_patch().map_err(|err| format!("{err:#}")),
+            |message| info!("{}", message),
+        )
+        .map_err(anyhow::Error::msg)
+    }
 
-        Ok(())
+    fn start_gui_install(
+        &mut self,
+        work: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+    ) -> iced::Command<Message> {
+        self.installation_running = true;
+        self.status_text = "正在安装，请稍候……".to_owned();
+        iced::Command::perform(run_in_background(work), Message::InstallFinished)
     }
 
     pub fn install_patch() -> anyhow::Result<()> {
-        let patch_file_bytes = include_bytes!(env!("CARGO_CDYLIB_FILE_VERSION_version"));
+        let patch_file_bytes = include_bytes!(env!("PC_MANAGER_PATCH_DLL"));
 
         let pc_manager_dir: PathBuf = Self::get_pc_manager_dir()?;
         let target_version_dll_path = pc_manager_dir.join("version.dll");
@@ -491,7 +495,15 @@ impl BootstrapApp {
 
     fn check_pc_manager_installed() -> anyhow::Result<bool> {
         let pc_manager_exe: PathBuf = Self::get_pc_manager_dir()?.join("PCManager.exe");
-        Ok(pc_manager_exe.exists())
+        match std::fs::metadata(&pc_manager_exe) {
+            Ok(metadata) => Ok(metadata.is_file()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(err) => Err(anyhow::anyhow!(
+                "Failed to inspect {}: {}",
+                pc_manager_exe.display(),
+                err
+            )),
+        }
     }
 
     fn get_pc_manager_dir() -> anyhow::Result<PathBuf> {
@@ -516,5 +528,143 @@ impl BootstrapApp {
         };
 
         Ok([program_files_dir, "Huawei", "PCManager"].iter().collect())
+    }
+}
+
+/// Keep blocking process/file operations off Iced's executor. Dropping the
+/// sender (including a worker panic) is a failure, never an implicit success.
+fn run_in_background(
+    work: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+) -> impl std::future::Future<Output = Result<(), String>> {
+    let (sender, receiver) = futures::channel::oneshot::channel();
+    let worker = thread::Builder::new()
+        .name("pc-manager-install".into())
+        .spawn(move || {
+            let _ = sender.send(work().map_err(|err| format!("{err:#}")));
+        });
+
+    async move {
+        if let Err(err) = worker {
+            return Err(format!("Failed to start installation worker: {}", err));
+        }
+        receiver
+            .await
+            .map_err(|_| "Installation worker stopped without reporting a result".to_owned())?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::FutureExt;
+
+    fn app() -> BootstrapApp {
+        BootstrapApp::new_with_config(AppInitializationParams::default())
+    }
+
+    #[test]
+    fn embedded_patch_is_an_amd64_pe_dll() {
+        let bytes = include_bytes!(env!("PC_MANAGER_PATCH_DLL"));
+        assert_eq!(&bytes[..2], b"MZ");
+        let pe_offset = u32::from_le_bytes(bytes[0x3c..0x40].try_into().unwrap()) as usize;
+        assert_eq!(&bytes[pe_offset..pe_offset + 4], b"PE\0\0");
+        let machine = u16::from_le_bytes(bytes[pe_offset + 4..pe_offset + 6].try_into().unwrap());
+        assert_eq!(machine, 0x8664, "PCManager requires an AMD64 patch DLL");
+    }
+
+    #[test]
+    fn queued_conflicting_actions_are_ignored_while_installing() {
+        let mut app = app();
+        app.installation_running = true;
+        app.status_text = "installing".into();
+        app.executable_file_path = "selected.exe".into();
+
+        for message in [
+            Message::Install,
+            Message::InstallPatch,
+            Message::TerminateAllProcesses,
+            Message::AutoScanSetup,
+            Message::BrowserSetup,
+            Message::ChangeSetupFilePath("different.exe".into()),
+            Message::OpenConfigFile,
+        ] {
+            let _ = app.update(message);
+            assert!(app.installation_running);
+            assert_eq!(app.status_text, "installing");
+            assert_eq!(app.executable_file_path, "selected.exe");
+        }
+    }
+
+    #[test]
+    fn starting_gui_work_does_not_report_completion() {
+        let mut app = app();
+        let _ = app.start_gui_install(|| Ok(()));
+        assert!(app.installation_running);
+        assert_eq!(app.status_text, "正在安装，请稍候……");
+    }
+
+    #[test]
+    fn cli_start_install_returns_spawn_failure() {
+        // An empty executable name cannot launch a process on Windows.
+        let error = app().start_install().unwrap_err();
+        assert!(error.to_string().contains("Failed to execute"));
+    }
+
+    #[test]
+    fn completion_reports_success_and_unlocks_controls() {
+        let mut app = app();
+        app.installation_running = true;
+        let _ = app.update(Message::InstallFinished(Ok(())));
+        assert!(!app.installation_running);
+        assert_eq!(app.status_text, "安装任务已完成，请验证电脑管家功能。");
+        let _ = app.update(Message::ChangeSetupFilePath("next.exe".into()));
+        assert_eq!(app.executable_file_path, "next.exe");
+    }
+
+    #[test]
+    fn completion_reports_error_and_unlocks_controls() {
+        let mut app = app();
+        app.installation_running = true;
+        let _ = app.update(Message::InstallFinished(Err("patch failed".into())));
+        assert!(!app.installation_running);
+        assert_eq!(app.status_text, "Installing failed: patch failed");
+    }
+
+    #[test]
+    fn logs_continue_updating_while_installing() {
+        let mut app = app();
+        app.installation_running = true;
+        let _ = app.update(Message::UpdateLogContent("working".into()));
+        assert!(app.installation_running);
+        assert!(app.log_text.ends_with("working\n"));
+    }
+
+    #[test]
+    fn background_result_stays_pending_until_worker_finishes() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let future = run_in_background(move || {
+            wait.recv().unwrap();
+            Ok(())
+        });
+        futures::pin_mut!(future);
+        assert!(future.as_mut().now_or_never().is_none());
+        release.send(()).unwrap();
+        assert_eq!(futures::executor::block_on(future), Ok(()));
+    }
+
+    #[test]
+    fn background_errors_reach_the_gui() {
+        let result =
+            futures::executor::block_on(run_in_background(|| Err(anyhow::anyhow!("patch failed"))));
+        assert_eq!(result, Err("patch failed".into()));
+    }
+
+    #[test]
+    fn worker_panic_is_reported_as_failure() {
+        let result = futures::executor::block_on(run_in_background(|| panic!("test panic")));
+        assert_eq!(
+            result,
+            Err("Installation worker stopped without reporting a result".into())
+        );
     }
 }

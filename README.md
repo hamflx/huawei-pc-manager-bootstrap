@@ -38,6 +38,15 @@
 
 ## 从源码构建
 
+需要 Windows x64、Visual Studio 2022 C++ 构建工具（含 x86/x64 MSVC 和 Windows SDK），以及 Rustup。项目固定使用 `nightly-2025-02-01`，与当前锁定依赖对应；不要直接使用滚动更新的 nightly 或 stable。
+
+先安装构建脚本使用的两套宿主工具链（沿用项目的 x64/x86 分阶段构建流程；`forward-dll` 在 x64 补丁阶段生成对应导入库）：
+
+```cmd
+rustup toolchain install nightly-2025-02-01-x86_64-pc-windows-msvc --profile minimal
+rustup toolchain install nightly-2025-02-01-i686-pc-windows-msvc --profile minimal --force-non-host
+```
+
 输入以下命令，所有命令都成功之后，会在项目下建立 `dist` 目录，保存构建成功的文件。
 
 ```cmd
@@ -46,6 +55,16 @@ cd huawei-pc-manager-bootstrap
 
 .\build-release.bat
 ```
+
+构建脚本先生成 x64 `version.dll`，再将其嵌入 x86 安装器，并构建 x86 注入核心。`dist` 中的 EXE 和核心 DLL 必须一起分发；无需额外分发已嵌入的补丁。开发构建使用 `build-dev.bat`。
+
+运行不启动真实安装程序的回归测试：
+
+```cmd
+cargo +nightly-2025-02-01-i686-pc-windows-msvc test --locked --release -p huawei-pc-manager-bootstrap --target=i686-pc-windows-msvc
+```
+
+GitHub Actions 会针对 `master` 的 PR 构建、测试并检查 PE 架构，上传 `dist` 构建产物。CI 不验证 UAC 交互、真实华为安装包或设备协同功能；这些需在 Windows 测试机上验证。
 
 ## 实现思路
 

@@ -1,0 +1,90 @@
+name: Windows build and tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install pinned x64 and x86 Rust toolchains
+        shell: pwsh
+        run: |
+          rustup toolchain install nightly-2025-02-01-x86_64-pc-windows-msvc --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup toolchain install nightly-2025-02-01-i686-pc-windows-msvc --profile minimal --force-non-host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build release bundle (x64 patch, x86 launcher and core)
+        shell: cmd
+        run: build-release.bat
+      - name: Run regression tests without launching the installer
+        shell: pwsh
+        run: cargo +nightly-2025-02-01-i686-pc-windows-msvc test --locked --release -p huawei-pc-manager-bootstrap --target=i686-pc-windows-msvc
+      - name: Smoke-test real CLI startup and failure reporting (no UAC or installer)
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          $exe = (Resolve-Path dist/huawei-pc-manager-bootstrap.exe).Path
+          $stdout = Join-Path $env:RUNNER_TEMP 'bootstrap-smoke.stdout'
+          $stderr = Join-Path $env:RUNNER_TEMP 'bootstrap-smoke.stderr'
+          function Run-Bootstrap($arguments) {
+            $process = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            if (-not $process.WaitForExit(30000)) {
+              $process.Kill()
+              throw 'Bootstrap smoke test timed out'
+            }
+            $process.WaitForExit()
+            $process.Refresh()
+            return $process.ExitCode
+          }
+          $exit = Run-Bootstrap @('--help')
+          if ($exit -ne 0) { throw "CLI help failed with exit code $exit" }
+          if ((Get-Content $stdout -Raw) -notmatch '--install') { throw 'CLI help output was missing' }
+          $missing = Join-Path $env:RUNNER_TEMP ('missing-installer-' + [guid]::NewGuid() + '.exe')
+          if (Test-Path $missing) { throw 'Refusing to run an existing installer' }
+          # --ensure-admin prevents any elevation request even on a non-admin runner.
+          $exit = Run-Bootstrap @('--ensure-admin', '--install', $missing)
+          if ($exit -eq 0) { throw 'Invalid installer was incorrectly reported as successful' }
+          $errorText = Get-Content $stderr -Raw
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            if ($errorText -notmatch 'Failed to execute') { throw "Missing installation failure detail: $errorText" }
+            Write-Host 'Real CLI startup, missing-installer failure and nonzero exit verified'
+          } else {
+            if ($errorText -notmatch 'Administrator privileges are required') { throw "Missing privilege failure detail: $errorText" }
+            Write-Host 'Real CLI startup and no-UAC privilege guard verified (runner is not elevated)'
+          }
+      - name: Verify bundle architectures
+        shell: pwsh
+        run: |
+          function Assert-Machine($path, $expected) {
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
+            $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+            if ([BitConverter]::ToUInt32($bytes, $pe) -ne 0x4550) { throw "Invalid PE: $path" }
+            $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+            if ($machine -ne $expected) { throw "Wrong architecture in ${path}: $machine" }
+          }
+          Assert-Machine target/x86_64-pc-windows-msvc/release/version.dll 0x8664
+          Assert-Machine dist/huawei-pc-manager-bootstrap.exe 0x14c
+          Assert-Machine dist/huawei_pc_manager_bootstrap_core.dll 0x14c
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huawei-pc-manager-bootstrap-windows
+          path: dist/*
+          if-no-files-found: error
