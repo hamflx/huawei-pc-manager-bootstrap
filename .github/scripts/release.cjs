@@ -15,7 +15,7 @@ async function publish({ github, context, core, directory = 'release' }) {
   const { tag, prerelease } = releaseVersion(context.ref.replace(/^refs\/tags\//, ''));
   const repo = context.repo;
   // Resolve the tag again immediately before publishing, including annotated tags.
-  const { data: commit } = await github.rest.repos.getCommit({ ...repo, ref: tag });
+  const { data: commit } = await github.rest.repos.getCommit({ ...repo, ref: `refs/tags/${tag}` });
   if (commit.sha !== context.sha) throw new Error('Release tag moved since this build started');
   const marker = `<!-- release-commit: ${context.sha} -->`;
   const names = [`huawei-pc-manager-bootstrap-${tag}.zip`, 'SHA256SUMS.txt'];
@@ -27,6 +27,11 @@ async function publish({ github, context, core, directory = 'release' }) {
     ({ data: release } = await github.rest.repos.getReleaseByTag({ ...repo, tag }));
   } catch (error) {
     if (error.status !== 404) throw error;
+    // The by-tag endpoint only returns published releases. Authenticated listing includes drafts.
+    const releases = await github.paginate(github.rest.repos.listReleases, { ...repo, per_page: 100 });
+    const matches = releases.filter(candidate => candidate.tag_name === tag);
+    if (matches.length > 1) throw new Error('Multiple releases use this tag; resolve them manually');
+    release = matches[0];
   }
   if (release) {
     if (!release.body?.includes(marker)) throw new Error('Existing release is not owned by this commit; refusing to overwrite it');
@@ -54,6 +59,8 @@ async function publish({ github, context, core, directory = 'release' }) {
     }
     await github.rest.repos.uploadReleaseAsset({ ...repo, release_id: release.id, name: file.name, data: file.data });
   }
+  const { data: finalCommit } = await github.rest.repos.getCommit({ ...repo, ref: `refs/tags/${tag}` });
+  if (finalCommit.sha !== context.sha) throw new Error('Release tag moved during upload; leaving draft unpublished');
   await github.rest.repos.updateRelease({ ...repo, release_id: release.id, draft: false, prerelease, make_latest: 'legacy' });
   core.info(`Published ${tag}`);
 }

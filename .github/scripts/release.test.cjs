@@ -27,9 +27,11 @@ function fixture(t, existing, options = {}) {
   fs.writeFileSync(path.join(directory, 'SHA256SUMS.txt'), `${digest}  ${name}\n`);
   const calls = [];
   let assets = options.assets || [];
+  let commitReads = 0;
   const repos = {
-    getCommit: async () => ({ data: { sha: options.moved ? 'b'.repeat(40) : sha } }),
-    getReleaseByTag: async () => { if (!existing) throw { status: options.status || 404 }; return { data: existing }; },
+    getCommit: async () => ({ data: { sha: (options.moved || (options.moveDuringUpload && commitReads++ > 0)) ? 'b'.repeat(40) : sha } }),
+    getReleaseByTag: async () => { if (!existing || existing.draft) throw { status: options.status || 404 }; return { data: existing }; },
+    listReleases: async () => existing ? [{ ...existing, tag_name: tag }] : [],
     generateReleaseNotes: async () => ({ data: { body: 'Changes' } }),
     createRelease: async args => { calls.push(['create', args]); return { data: { id: 1 } }; },
     listReleaseAssets: async () => assets,
@@ -88,4 +90,10 @@ test('bad checksums cannot create releases', async t => {
   fs.writeFileSync(path.join(f.directory, 'SHA256SUMS.txt'), 'bad hash');
   await assert.rejects(publish(f.args), /checksum mismatch/);
   assert.deepEqual(f.calls, []);
+});
+
+test('tag moved during upload leaves draft unpublished', async t => {
+  const f = fixture(t, null, { moveDuringUpload: true });
+  await assert.rejects(publish(f.args), /moved during upload/);
+  assert.ok(!f.calls.some(c => c[0] === 'publish'));
 });
