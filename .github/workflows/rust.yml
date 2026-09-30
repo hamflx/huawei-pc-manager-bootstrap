@@ -20,12 +20,14 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Install pinned x64 and x86 Rust toolchains
         shell: pwsh
         run: |
           rustup toolchain install nightly-2025-02-01-x86_64-pc-windows-msvc --profile minimal
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          rustup toolchain install nightly-2025-02-01-i686-pc-windows-msvc --profile minimal
+          rustup toolchain install nightly-2025-02-01-i686-pc-windows-msvc --profile minimal --force-non-host
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build release bundle (x64 patch, x86 launcher and core)
         shell: cmd

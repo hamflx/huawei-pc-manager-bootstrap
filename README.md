@@ -44,7 +44,7 @@
 
 ```cmd
 rustup toolchain install nightly-2025-02-01-x86_64-pc-windows-msvc --profile minimal
-rustup toolchain install nightly-2025-02-01-i686-pc-windows-msvc --profile minimal
+rustup toolchain install nightly-2025-02-01-i686-pc-windows-msvc --profile minimal --force-non-host
 ```
 
 输入以下命令，所有命令都成功之后，会在项目下建立 `dist` 目录，保存构建成功的文件。
