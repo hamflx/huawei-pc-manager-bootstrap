@@ -1,0 +1,53 @@
+name: Windows build and tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned x64 and x86 Rust toolchains
+        shell: pwsh
+        run: |
+          rustup toolchain install nightly-2025-02-01-x86_64-pc-windows-msvc --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup toolchain install nightly-2025-02-01-i686-pc-windows-msvc --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build release bundle (x64 patch, x86 launcher and core)
+        shell: cmd
+        run: build-release.bat
+      - name: Run regression tests without launching the installer
+        shell: pwsh
+        run: cargo +nightly-2025-02-01-i686-pc-windows-msvc test --locked --release -p huawei-pc-manager-bootstrap --target=i686-pc-windows-msvc
+      - name: Verify bundle architectures
+        shell: pwsh
+        run: |
+          function Assert-Machine($path, $expected) {
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
+            $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+            if ([BitConverter]::ToUInt32($bytes, $pe) -ne 0x4550) { throw "Invalid PE: $path" }
+            $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+            if ($machine -ne $expected) { throw "Wrong architecture in ${path}: $machine" }
+          }
+          Assert-Machine target/x86_64-pc-windows-msvc/release/version.dll 0x8664
+          Assert-Machine dist/huawei-pc-manager-bootstrap.exe 0x14c
+          Assert-Machine dist/huawei_pc_manager_bootstrap_core.dll 0x14c
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huawei-pc-manager-bootstrap-windows
+          path: dist/*
+          if-no-files-found: error
