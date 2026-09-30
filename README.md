@@ -66,6 +66,30 @@ cargo +nightly-2025-02-01-i686-pc-windows-msvc test --locked --release -p huawei
 
 GitHub Actions 会针对 `master` 的 PR 构建、测试并检查 PE 架构，上传 `dist` 构建产物。CI 不验证 UAC 交互、真实华为安装包或设备协同功能；这些需在 Windows 测试机上验证。
 
+## 自动发布版本
+
+合并发布工作流后，推送 `vMAJOR.MINOR.PATCH` 标签（例如 `v0.1.12`）会自动运行完整 Windows 构建、回归测试、CLI 冒烟测试和 PE 架构检查。全部通过后，创建 GitHub Release，自动生成更新说明，并上传：
+
+- `huawei-pc-manager-bootstrap-v0.1.12.zip`：包含必须一起使用的 x86 EXE 和核心 DLL；x64 `version.dll` 已嵌入 EXE
+- `SHA256SUMS.txt`：ZIP 的 SHA-256 校验值
+
+`v0.1.12-rc.1`、`v0.1.12-beta.1` 等带预发布后缀的标签会标为 Pre-release。标签严格采用上述版本格式（不支持 `+build`）；版本号由标签决定，工作流不会自动改写 Cargo.toml 中的 crate 版本。普通分支提交、PR 和手动运行工作流都只验证和上传 Actions 构建产物，不创建 Release。PR 也会实际执行 ZIP 打包与内容验证。
+
+维护者确认要发布时，在含有发布工作流的提交上执行（下面只是操作示例，不是自动执行的命令）：
+
+```sh
+git switch master
+git pull --ff-only
+git tag -a v0.1.12 -m "Release v0.1.12"
+git push origin v0.1.12
+```
+
+每个标签使用独立的执行队列。发布先创建草稿、上传完整附件，再公开；失败可在 Actions 中重新运行。重跑只修复同一提交创建的草稿，已成功发布的版本保持原附件不变，不覆盖手工创建的 Release。不要移动已发布的标签；修改内容应发布新版本。稳定版使用 GitHub 的版本排序规则选择 Latest，预发布不设为 Latest。
+
+工作流使用 GitHub 自动提供的短期 `GITHUB_TOKEN`，只有发布任务拥有 `contents: write`，无需配置 PAT 或新密钥。若仓库/组织策略禁止写入 Release，需要管理员允许该工作流使用对应权限。可在 PowerShell 运行 `Get-FileHash .\huawei-pc-manager-bootstrap-v0.1.12.zip -Algorithm SHA256`，与校验文件中的值比较。
+
+CI 不会调用真实华为安装程序，UAC、真实安装与设备协同仍需手动验证。发布逻辑的失败/重跑行为使用模拟 GitHub API 测试；首次真正推送版本标签后才会执行真实 Release 上传。
+
 ## 实现思路
 
 1. 安装器启动安装包进行安装，在安装包执行 `"C:\Program Files\Huawei\PCManager\tmp\MBAInstallPre.exe" isSupportDevice` 和 `"C:\Program Files\Huawei\PCManager\tmp\MBAInstallPre.exe" IsSupportBaZhang` 时，结束该进程，并返回一个通过的值。
