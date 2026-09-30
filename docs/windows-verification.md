@@ -12,6 +12,8 @@ dependencies, runs installer/elevation regression tests, and verifies:
 - `version.dll` is AMD64 (x64) and the embedded patch regression test agrees
 - the launcher EXE and injected core DLL are I386 (x86)
 - both distribution files exist before artifact upload
+- the real EXE prints CLI help and returns a nonzero, diagnostic-bearing failure
+  for a nonexistent installer (or the no-UAC privilege guard on a non-admin runner)
 
 The workflow does not run an actual Huawei installer, request UAC elevation, or test
 PCManager/multi-screen functionality.
