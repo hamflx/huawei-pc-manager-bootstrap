@@ -26,6 +26,9 @@ use windows_sys::{
 
 use crate::config::{get_firmware_config, Config};
 
+const GET_MODULE_HANDLE_EX_FLAG_PIN: u32 = 0x0000_0001;
+const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: u32 = 0x0000_0004;
+
 #[repr(C)]
 #[derive(Clone)]
 #[allow(non_snake_case)]
@@ -548,6 +551,36 @@ fn should_inject_process(opts: &InjectOptions, app_name: &str, cmd_line: &str) -
         } else {
             !check_path_is_system(cmd_line)
         })
+}
+
+type FnGetModuleHandleExW = unsafe extern "system" fn(u32, PCWSTR, *mut *mut c_void) -> BOOL;
+
+/// Pin the module containing `address_in_module` so that a later `FreeLibrary`
+/// cannot actually unload it. The hook callbacks installed by `enable_hook`
+/// live in this module's code section; unloading the module would leave the
+/// inline detours pointing into freed memory and crash the host process with
+/// STATUS_ACCESS_VIOLATION (0xc0000005). `address_in_module` must point into
+/// the module to pin (e.g. the address of the exported `enable_hook` function).
+pub unsafe fn pin_module(address_in_module: *const c_void) -> anyhow::Result<()> {
+    let get_module_handle_ex_w: FnGetModuleHandleExW =
+        transmute(get_proc_address("GetModuleHandleExW", "kernel32.dll")?);
+    let mut module_handle: *mut c_void = std::ptr::null_mut();
+    let ok = get_module_handle_ex_w(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+        address_in_module as PCWSTR,
+        &mut module_handle,
+    );
+    if ok == 0 {
+        return Err(anyhow::anyhow!(
+            "GetModuleHandleExW failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if module_handle.is_null() {
+        return Err(anyhow::anyhow!("GetModuleHandleExW returned null handle"));
+    }
+    info!("Pinned module: 0x{:x}", module_handle as usize);
+    Ok(())
 }
 
 unsafe fn get_proc_address(
